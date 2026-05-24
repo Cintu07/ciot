@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" width="900" height="620">
+  <rect width="900" height="620" fill="#ffffff"/>
+
+  <text x="450" y="60" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="26" font-weight="600" fill="#1f2328" letter-spacing="-0.3">production benchmarks</text>
+  <text x="450" y="88" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#6e7781">snapdragon x  |  arm neon  |  optimized build  |  checksums verified across paths</text>
+
+  <line x1="80" y1="116" x2="820" y2="116" stroke="#d0d7de" stroke-width="1"/>
+
+  <g transform="translate(80, 140)">
+    <rect width="240" height="84" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="84" rx="1.5" fill="#1a7f37"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">simd speedup</text>
+    <text x="22" y="66" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="700" fill="#1f2328" letter-spacing="-0.5">5.7x</text>
+    <text x="218" y="66" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#656d76">over scalar path</text>
+  </g>
+
+  <g transform="translate(330, 140)">
+    <rect width="240" height="84" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="84" rx="1.5" fill="#1a7f37"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">benchmarks passing</text>
+    <text x="22" y="66" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="700" fill="#1f2328" letter-spacing="-0.5">7 / 7</text>
+    <text x="218" y="66" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#656d76">all green</text>
+  </g>
+
+  <g transform="translate(580, 140)">
+    <rect width="240" height="84" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="84" rx="1.5" fill="#0969da"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">peak throughput</text>
+    <text x="22" y="66" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="32" font-weight="700" fill="#1f2328" letter-spacing="-0.5">5.14</text>
+    <text x="218" y="66" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#656d76">gop/s</text>
+  </g>
+
+  <g transform="translate(80, 254)">
+    <rect width="740" height="32" fill="#ffffff" rx="6"/>
+    <text x="20" y="20" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#57606a" letter-spacing="0.6">BENCHMARK</text>
+    <text x="335" y="20" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#57606a" letter-spacing="0.6">MEDIAN MS</text>
+    <text x="360" y="20" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#57606a" letter-spacing="0.6">THROUGHPUT (GOP/S)</text>
+    <text x="650" y="20" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#57606a" letter-spacing="0.6">CHECKSUM</text>
+    <text x="720" y="20" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#57606a" letter-spacing="0.6">STATUS</text>
+  </g>
+
+  <g transform="translate(80, 294)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">linear 1024 x 1024</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">0.54</text>
+    <rect x="360" y="13" width="76" height="10" rx="2" fill="#1a7f37" opacity="0.85"/>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">3.92</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">1.951170</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+    <line x1="0" y1="38" x2="740" y2="38" stroke="#eaeef2" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(80, 332)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">linear (scalar reference)</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">3.06</text>
+    <rect x="360" y="13" width="13" height="10" rx="2" fill="#cf222e" opacity="0.9"/>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">0.69</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">1.951170</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+    <line x1="0" y1="38" x2="740" y2="38" stroke="#eaeef2" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(80, 370)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">batched 4 x 1024</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">1.84</text>
+    <rect x="360" y="13" width="89" height="10" rx="2" fill="#1a7f37" opacity="0.85"/>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">4.57</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">7.804690</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+    <line x1="0" y1="38" x2="740" y2="38" stroke="#eaeef2" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(80, 408)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">decode 128 x 32</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">1.27</text>
+    <rect x="360" y="13" width="97" height="10" rx="2" fill="#1a7f37" opacity="0.85"/>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">4.97</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">-604.6440</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+    <line x1="0" y1="38" x2="740" y2="38" stroke="#eaeef2" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(80, 446)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">mha decode 128 x 4h</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">1.31</text>
+    <rect x="360" y="13" width="93" height="10" rx="2" fill="#1a7f37" opacity="0.85"/>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">4.80</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">0.000000</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+    <line x1="0" y1="38" x2="740" y2="38" stroke="#eaeef2" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(80, 484)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">rope 1024 dim</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">0.00045</text>
+    <text x="360" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" font-style="italic">not applicable</text>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#57606a">n/a</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">-8.003250</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+    <line x1="0" y1="38" x2="740" y2="38" stroke="#eaeef2" stroke-width="1"/>
+  </g>
+
+  <g transform="translate(80, 522)">
+    <text x="20" y="22" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">transformer 256</text>
+    <text x="335" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#424a53">0.15</text>
+    <rect x="360" y="13" width="100" height="10" rx="2" fill="#1a7f37" opacity="0.85"/>
+    <text x="555" y="22" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" font-weight="500" fill="#1f2328">5.14</text>
+    <text x="650" y="22" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" fill="#656d76">62.525900</text>
+    <rect x="688" y="9" width="32" height="18" rx="9" fill="#1a7f37" fill-opacity="0.12" stroke="#1a7f37" stroke-opacity="0.4" stroke-width="1"/>
+    <text x="704" y="22" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="10" font-weight="600" fill="#1a7f37" letter-spacing="0.3">ok</text>
+  </g>
+
+  <line x1="80" y1="572" x2="820" y2="572" stroke="#d0d7de" stroke-width="1"/>
+  <text x="80" y="594" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#6e7781" letter-spacing="0.3">github.com/Cintu07/ciot</text>
+  <text x="820" y="594" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f">2026 05 24</text>
+</svg>

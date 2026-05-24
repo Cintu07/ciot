@@ -57,17 +57,17 @@ these numbers are from a snapdragon x laptop with arm neon, compiled with -O3. y
 the scalar row is the same binary forced to use the scalar path at runtime. checksums are identical across all seven benchmarks. simd is about 5.7x faster for the 1024x1024 matvec.
 
 <p align="center">
-  <img src="data/bench_hero.svg" width="700" alt="benchmark chart">
+  <img src="data/ciot_latency.png" width="700" alt="benchmark chart">
   <br><em>scalar vs neon on snapdragon x, 1024x1024 ternary matvec</em>
 </p>
 
 <p align="center">
-  <img src="data/bench_table.svg" width="700" alt="benchmark table">
+  <img src="data/ciot_benchmarks.png" width="700" alt="benchmark table">
   <br><em>all seven benchmarks, checksum verified</em>
 </p>
 
 <p align="center">
-  <img src="data/architecture.svg" width="800" alt="pipeline">
+  <img src="data/ciot_pipeline.png" width="800" alt="pipeline">
   <br><em>inference pipeline from text to tokens</em>
 </p>
 

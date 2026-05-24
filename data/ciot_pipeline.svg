@@ -1,0 +1,121 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1100" width="900" height="1100">
+  <rect width="900" height="1100" fill="#ffffff"/>
+
+  <text x="450" y="60" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="26" font-weight="600" fill="#1f2328" letter-spacing="-0.3">ciot inference pipeline</text>
+  <text x="450" y="88" text-anchor="middle" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="13" fill="#6e7781">packed ternary weights stored as .bits files  |  zero heavy dependencies</text>
+
+  <line x1="80" y1="116" x2="820" y2="116" stroke="#d0d7de" stroke-width="1"/>
+
+  <g transform="translate(180, 140)">
+    <rect width="540" height="56" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="56" rx="1.5" fill="#0969da"/>
+    <text x="22" y="34" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">01</text>
+    <text x="56" y="34" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="500" fill="#1f2328">text input</text>
+    <text x="518" y="34" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">input</text>
+  </g>
+
+  <line x1="450" y1="196" x2="450" y2="222" stroke="#afb8c1" stroke-width="1"/>
+
+  <g transform="translate(180, 222)">
+    <rect width="540" height="68" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="68" rx="1.5" fill="#bc4c00"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">02</text>
+    <text x="56" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="500" fill="#1f2328">tokenizer</text>
+    <text x="56" y="50" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#656d76">word level lookup table</text>
+    <text x="518" y="30" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">preprocess</text>
+  </g>
+
+  <line x1="450" y1="290" x2="450" y2="316" stroke="#afb8c1" stroke-width="1"/>
+
+  <g transform="translate(180, 316)">
+    <rect width="540" height="68" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="68" rx="1.5" fill="#8250df"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">03</text>
+    <text x="56" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="500" fill="#1f2328">embedding</text>
+    <text x="56" y="50" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#656d76">vocab by dim ternary weights loaded from .bits</text>
+    <text x="518" y="30" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">weights</text>
+  </g>
+
+  <line x1="450" y1="384" x2="450" y2="410" stroke="#afb8c1" stroke-width="1"/>
+
+  <g transform="translate(180, 410)">
+    <rect width="540" height="320" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="320" rx="1.5" fill="#1a7f37"/>
+
+    <text x="22" y="34" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">04</text>
+    <text x="56" y="34" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="16" font-weight="600" fill="#1f2328">transformer layers</text>
+    <text x="56" y="54" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#656d76">repeats N times across the stack</text>
+    <text x="518" y="34" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">compute</text>
+
+    <line x1="22" y1="78" x2="518" y2="78" stroke="#d0d7de" stroke-width="1"/>
+
+    <g transform="translate(22, 96)">
+      <rect width="246" height="204" rx="6" fill="#ffffff" stroke="#d8dee4" stroke-width="1"/>
+      <circle cx="18" cy="24" r="3" fill="#1a7f37"/>
+      <text x="30" y="28" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1f2328">attention block</text>
+      <line x1="16" y1="42" x2="230" y2="42" stroke="#d8dee4" stroke-width="1"/>
+
+      <text x="16" y="64" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">rmsnorm</text>
+      <text x="16" y="86" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">q k v projection</text>
+      <text x="16" y="108" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">rope rotation</text>
+      <text x="16" y="130" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">multi head attention</text>
+      <text x="16" y="152" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">kv cache append</text>
+      <text x="16" y="174" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">output projection</text>
+      <text x="16" y="196" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">residual add</text>
+    </g>
+
+    <g transform="translate(272, 96)">
+      <rect width="246" height="204" rx="6" fill="#ffffff" stroke="#d8dee4" stroke-width="1"/>
+      <circle cx="18" cy="24" r="3" fill="#1a7f37"/>
+      <text x="30" y="28" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" font-weight="600" fill="#1f2328">feedforward block</text>
+      <line x1="16" y1="42" x2="230" y2="42" stroke="#d8dee4" stroke-width="1"/>
+
+      <text x="16" y="64" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">rmsnorm</text>
+      <text x="16" y="86" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">feedforward (relu)</text>
+      <text x="16" y="108" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#424a53">residual add</text>
+
+      <line x1="16" y1="148" x2="230" y2="148" stroke="#d8dee4" stroke-width="1"/>
+      <text x="16" y="170" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#57606a">weights stored as</text>
+      <text x="16" y="186" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#57606a">packed ternary .bits</text>
+    </g>
+  </g>
+
+  <line x1="450" y1="730" x2="450" y2="756" stroke="#afb8c1" stroke-width="1"/>
+
+  <g transform="translate(180, 756)">
+    <rect width="540" height="68" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="68" rx="1.5" fill="#8250df"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">05</text>
+    <text x="56" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="500" fill="#1f2328">lm head</text>
+    <text x="56" y="50" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#656d76">project hidden states to vocab logits</text>
+    <text x="518" y="30" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">weights</text>
+  </g>
+
+  <line x1="450" y1="824" x2="450" y2="850" stroke="#afb8c1" stroke-width="1"/>
+
+  <g transform="translate(180, 850)">
+    <rect width="540" height="68" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="68" rx="1.5" fill="#bc4c00"/>
+    <text x="22" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">06</text>
+    <text x="56" y="30" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="500" fill="#1f2328">token decode</text>
+    <text x="56" y="50" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="12" fill="#656d76">argmax selection over vocab</text>
+    <text x="518" y="30" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">postprocess</text>
+  </g>
+
+  <line x1="450" y1="918" x2="450" y2="944" stroke="#afb8c1" stroke-width="1"/>
+
+  <g transform="translate(180, 944)">
+    <rect width="540" height="56" rx="8" fill="#f6f8fa" stroke="#d0d7de" stroke-width="1"/>
+    <rect width="3" height="56" rx="1.5" fill="#0969da"/>
+    <text x="22" y="34" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#57606a" letter-spacing="0.4">07</text>
+    <text x="56" y="34" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="15" font-weight="500" fill="#1f2328">text output</text>
+    <text x="518" y="34" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f" letter-spacing="0.3">output</text>
+  </g>
+
+  <line x1="80" y1="1040" x2="820" y2="1040" stroke="#d0d7de" stroke-width="1"/>
+  <text x="80" y="1064" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#6e7781" letter-spacing="0.3">simd backends</text>
+  <text x="80" y="1080" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f">arm neon  /  avx2  /  avx 512  /  scalar reference path included</text>
+
+  <text x="820" y="1064" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" font-weight="600" fill="#6e7781" letter-spacing="0.3">github.com/Cintu07/ciot</text>
+  <text x="820" y="1080" text-anchor="end" font-family="ui-sans-serif, system-ui, -apple-system, sans-serif" font-size="11" fill="#8c959f">2026 05 24</text>
+</svg>
