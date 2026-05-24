@@ -11,9 +11,11 @@ LDFLAGS ?=
 CORE_SRC := src/kernels/ternary_simd.cpp src/linalg/linear.cpp src/model/ops.cpp src/model/tiny_transformer.cpp src/model/kv_cache.cpp src/model/mha_cache.cpp src/model/tokenizer.cpp src/model/model_loader.cpp
 APP_SRC := src/main.cpp $(CORE_SRC)
 TEST_LINEAR_SRC := tests/test_linear.cpp $(CORE_SRC)
+TEST_PROD_SRC := tests/test_production.cpp $(CORE_SRC)
 
 BIN := bin/ciot
 TEST_LINEAR_BIN := bin/test_linear
+TEST_PROD_BIN := bin/test_production
 TEST_SIMD_BIN := bin/test_simd
 
 .PHONY: all clean test smoke bench simd-test avx2 avx512 avx2-hello dirs
@@ -35,6 +37,9 @@ $(BIN): $(APP_SRC) include/Ciot.h | dirs
 $(TEST_LINEAR_BIN): $(TEST_LINEAR_SRC) include/Ciot.h | dirs
 	$(CXX) $(CXXFLAGS) $(TEST_LINEAR_SRC) $(LDFLAGS) -o $(TEST_LINEAR_BIN)
 
+$(TEST_PROD_BIN): $(TEST_PROD_SRC) include/Ciot.h | dirs
+	$(CXX) $(CXXFLAGS) $(TEST_PROD_SRC) $(LDFLAGS) -o $(TEST_PROD_BIN)
+
 $(TEST_SIMD_BIN): tests/test_simd.cpp | dirs
 	$(CXX) $(SIMD_CXXFLAGS) tests/test_simd.cpp -o $(TEST_SIMD_BIN)
 
@@ -46,8 +51,9 @@ avx2-hello: $(TEST_SIMD_BIN)
 
 smoke: simd-test
 
-test: $(TEST_LINEAR_BIN)
+test: $(TEST_LINEAR_BIN) $(TEST_PROD_BIN)
 	./$(TEST_LINEAR_BIN)
+	./$(TEST_PROD_BIN)
 
 bench: $(BIN)
 	./$(BIN) --bench-linear-pro 1024 1024 200 9 20
