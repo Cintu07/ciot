@@ -1,0 +1,20 @@
+ciot packs ternary bits on neon very fast
+ciot runs on arm neon and x86 avx
+ternary weights use bit planes for fast dot products
+neon simd accelerates matrix vector multiply
+ciot inference engine is pure c plus plus
+bitnet style ternary quantization saves memory
+the transformer block has attention and ffn
+key value cache stores past tokens for decode
+rope rotates query and key vectors by position
+multi head attention splits into smaller heads
+ciot is fast on arm neon for inference
+packed ternary bits use positive and negative masks
+every 64 weights pack into one 64 bit integer
+the model loader reads bits files from disk
+rms norm normalizes before attention and ffn
+softmax converts scores to probabilities
+causal attention prevents looking at future tokens
+the decode loop generates one token at a time
+ciot uses only standard library python for tools
+benchmark suite measures latency and throughput
