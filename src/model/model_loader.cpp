@@ -47,15 +47,7 @@ bool model_load_weights(const CiotModelConfig* cfg, const char* dir,
 
     // LM head: dim x vocab_size
     std::snprintf(path, sizeof(path), "%s/lm_head.bits", dir);
-    if (!matrix_load_bits(lm_head, path)) {
-        // lm_head = embed^T is common; if missing, use identity-like approach
-        for (std::uint32_t i = 0; i < cfg->vocab_size && i < cfg->dim; ++i) {
-            if (!matrix_init(lm_head, cfg->dim, cfg->vocab_size)) return false;
-            matrix_set_ternary(lm_head, i, i, 1);
-            lm_head->row_scale[i] = 4.0f;
-        }
-        return false;
-    }
+    if (!matrix_load_bits(lm_head, path)) return false;
 
     for (std::uint32_t l = 0; l < cfg->num_layers; ++l) {
         const char* names[6] = {"wq", "wk", "wv", "wo", "w1", "w2"};

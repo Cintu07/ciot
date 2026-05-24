@@ -93,7 +93,6 @@ std::int8_t matrix_get_ternary(const TernaryMatrix* matrix, std::uint32_t row, s
 void matvec_ternary_ref(const TernaryMatrix* matrix, const float* x, float* y);
 void matvec_ternary_simd(const TernaryMatrix* matrix, const float* x, float* y);
 void matmat_ternary_simd(const TernaryMatrix* matrix, const float* x, std::uint32_t batch, float* y);
-void matvec_ternary_avx2(const TernaryMatrix* matrix, const float* x, float* y);
 const char* simd_backend_name();
 
 // ---------------------------------------------------------------

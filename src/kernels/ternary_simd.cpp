@@ -201,10 +201,6 @@ void matvec_ternary_simd(const TernaryMatrix* matrix, const float* x, float* y) 
     matvec_ternary_native(matrix, x, y);
 }
 
-void matvec_ternary_avx2(const TernaryMatrix* matrix, const float* x, float* y) {
-    matvec_ternary_simd(matrix, x, y);
-}
-
 const char* simd_backend_name() {
     if (selected_backend() == DispatchBackend::Scalar) return "scalar-forced";
     return native_backend_name();
