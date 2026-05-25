@@ -1,0 +1,5 @@
+dim 32
+layers 1
+heads 2
+vocab_size 256
+max_context 128

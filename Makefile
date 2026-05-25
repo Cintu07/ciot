@@ -8,7 +8,7 @@ AVX2_CXXFLAGS ?= -std=c++17 -O3 -mavx2 -Wall -Wextra -Wpedantic -Iinclude
 AVX512_CXXFLAGS ?= -std=c++17 -O3 -mavx512f -Wall -Wextra -Wpedantic -Iinclude
 LDFLAGS ?=
 
-CORE_SRC := src/kernels/ternary_simd.cpp src/linalg/linear.cpp src/model/ops.cpp src/model/tiny_transformer.cpp src/model/kv_cache.cpp src/model/mha_cache.cpp src/model/tokenizer.cpp src/model/model_loader.cpp
+CORE_SRC := src/kernels/ternary_simd.cpp src/linalg/linear.cpp src/model/ops.cpp src/model/tiny_transformer.cpp src/model/kv_cache.cpp src/model/mha_cache.cpp src/model/tokenizer.cpp src/model/bpe_tokenizer.cpp src/model/model_loader.cpp
 APP_SRC := src/main.cpp $(CORE_SRC)
 TEST_LINEAR_SRC := tests/test_linear.cpp $(CORE_SRC)
 TEST_PROD_SRC := tests/test_production.cpp $(CORE_SRC)

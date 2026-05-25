@@ -792,10 +792,20 @@ int run_model_generate(int argc, char** argv) {
               << " heads=" << cfg.num_heads << " vocab=" << cfg.vocab_size
               << " backend=" << ciot::simd_backend_name() << "\n";
 
+    // Try BPE tokenizer first, fall back to word-level
+    char merges_path[512], vocab_path[512];
+    std::snprintf(merges_path, sizeof(merges_path), "%s/merges.txt", model_dir);
+    std::snprintf(vocab_path, sizeof(vocab_path), "%s/vocab.txt", model_dir);
+
+    ciot::BpeTokenizer bpe;
     ciot::Tokenizer tok;
-    char vocab_path[512]; std::snprintf(vocab_path, sizeof(vocab_path), "%s/vocab.txt", model_dir);
-    if (!ciot::tokenizer_load(&tok, vocab_path)) {
-        std::cerr << "failed to load vocab: " << vocab_path << "\n"; return 1;
+    bool use_bpe = ciot::bpe_tokenizer_load(&bpe, merges_path, vocab_path);
+    if (use_bpe) {
+        std::cout << "tokenizer: BPE (" << bpe.vocab_size << " tokens)\n";
+    } else if (ciot::tokenizer_load(&tok, vocab_path)) {
+        std::cout << "tokenizer: word-level (" << tok.vocab_size << " tokens)\n";
+    } else {
+        std::cerr << "failed to load tokenizer\n"; return 1;
     }
 
     const std::uint32_t L = cfg.num_layers;
@@ -828,8 +838,13 @@ int run_model_generate(int argc, char** argv) {
     for (std::uint32_t i = 0; i < cfg.dim; ++i) x[i] = 0.0f;
 
     std::cout << "prompt: \"" << prompt << "\" -> ";
-    std::uint32_t prompt_ids[64];
-    std::uint32_t n_prompt = ciot::tokenizer_encode_text(&tok, prompt, prompt_ids, 64);
+    std::uint32_t prompt_ids[128];
+    std::uint32_t n_prompt;
+    if (use_bpe) {
+        n_prompt = ciot::bpe_encode(&bpe, prompt, prompt_ids, 128);
+    } else {
+        n_prompt = ciot::tokenizer_encode_text(&tok, prompt, prompt_ids, 128);
+    }
     if (n_prompt == 0) n_prompt = 1;
 
     for (std::uint32_t pi = 0; pi < n_prompt; ++pi) {
@@ -876,7 +891,7 @@ int run_model_generate(int argc, char** argv) {
         ciot::matrix_free(&wo[l]); ciot::matrix_free(&w1[l]); ciot::matrix_free(&w2[l]);
     }
     delete[] wq; delete[] wk; delete[] wv; delete[] wo; delete[] w1; delete[] w2;
-    ciot::tokenizer_free(&tok);
+    if (use_bpe) ciot::bpe_tokenizer_free(&bpe); else ciot::tokenizer_free(&tok);
     return 0;
 }
 

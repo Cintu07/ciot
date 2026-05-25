@@ -67,7 +67,26 @@ struct CiotModelConfig {
 };
 
 // ---------------------------------------------------------------
-// Simple word-level tokenizer
+// BPE tokenizer (GPT-2 style byte-pair encoding)
+// Loads merges.txt (one merge pair per line) and vocab.json (token -> id)
+// ---------------------------------------------------------------
+struct BpeTokenizer {
+    std::uint32_t vocab_size = 0;
+    char** vocab = nullptr;           // id -> token string
+    std::uint32_t num_merges = 0;
+    int** merge_table = nullptr;      // 256x256 -> rank lookup for encoding
+};
+
+bool bpe_tokenizer_load(BpeTokenizer* tok, const char* merges_path, const char* vocab_path);
+void bpe_tokenizer_free(BpeTokenizer* tok);
+std::uint32_t bpe_encode(const BpeTokenizer* tok, const char* text,
+                          std::uint32_t* ids_out, std::uint32_t max_ids);
+const char* bpe_decode(const BpeTokenizer* tok, std::uint32_t id);
+void bpe_decode_ids(const BpeTokenizer* tok, const std::uint32_t* ids,
+                     std::uint32_t count, char* out, std::uint32_t max_out);
+
+// ---------------------------------------------------------------
+// Simple word-level tokenizer (legacy)
 // ---------------------------------------------------------------
 struct Tokenizer {
     std::uint32_t vocab_size = 0;

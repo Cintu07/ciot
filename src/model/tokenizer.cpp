@@ -31,10 +31,14 @@ bool tokenizer_load(Tokenizer* tok, const char* vocab_path) {
     if (!tok->tokens) { tok->vocab_size = 0; return false; }
 
     for (std::uint32_t i = 0; i < tok->vocab_size; ++i) {
-        const std::size_t len = words[i].size() + 1;
+        std::string word = words[i];
+        // Handle BPE-style "id<TAB>token" format
+        std::size_t tab = word.find('\t');
+        if (tab != std::string::npos) word = word.substr(tab + 1);
+        const std::size_t len = word.size() + 1;
         tok->tokens[i] = static_cast<char*>(std::malloc(len));
         if (!tok->tokens[i]) { tokenizer_free(tok); return false; }
-        std::memcpy(tok->tokens[i], words[i].c_str(), len);
+        std::memcpy(tok->tokens[i], word.c_str(), len);
     }
 
     return true;

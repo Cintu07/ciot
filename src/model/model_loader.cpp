@@ -16,8 +16,8 @@ bool model_config_load(CiotModelConfig* cfg, const char* path) {
     int val = 0;
     while (std::fscanf(f, "%127s %d", key, &val) == 2) {
         if (std::strcmp(key, "dim") == 0) cfg->dim = static_cast<std::uint32_t>(val);
-        else if (std::strcmp(key, "num_layers") == 0) cfg->num_layers = static_cast<std::uint32_t>(val);
-        else if (std::strcmp(key, "num_heads") == 0) cfg->num_heads = static_cast<std::uint32_t>(val);
+        if (std::strcmp(key, "num_layers") == 0 || std::strcmp(key, "layers") == 0) cfg->num_layers = static_cast<std::uint32_t>(val);
+        else if (std::strcmp(key, "num_heads") == 0 || std::strcmp(key, "heads") == 0) cfg->num_heads = static_cast<std::uint32_t>(val);
         else if (std::strcmp(key, "vocab_size") == 0) cfg->vocab_size = static_cast<std::uint32_t>(val);
         else if (std::strcmp(key, "max_context") == 0) cfg->max_context = static_cast<std::uint32_t>(val);
     }
