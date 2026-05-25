@@ -837,11 +837,29 @@ int run_model_generate(int argc, char** argv) {
 
     for (std::uint32_t i = 0; i < cfg.dim; ++i) x[i] = 0.0f;
 
+    // Detect char-level vocab: if most tokens are single chars, use char-level encoding
+    bool char_level = false;
+    if (!use_bpe && tok.vocab_size > 0) {
+        int single = 0;
+        for (std::uint32_t i = 0; i < tok.vocab_size && i < 30; ++i) {
+            const char* t = ciot::tokenizer_decode(&tok, i);
+            if (t && std::strlen(t) == 1) single++;
+        }
+        char_level = (single > 20);
+    }
+    if (char_level) std::cout << "tokenizer: char-level (" << tok.vocab_size << " chars)\n";
+
     std::cout << "prompt: \"" << prompt << "\" -> ";
     std::uint32_t prompt_ids[128];
     std::uint32_t n_prompt;
     if (use_bpe) {
         n_prompt = ciot::bpe_encode(&bpe, prompt, prompt_ids, 128);
+    } else if (char_level) {
+        // Char-level: map each character to its vocab ID
+        n_prompt = 0;
+        for (const char* cp = prompt; *cp && n_prompt < 128; ++cp) {
+            prompt_ids[n_prompt++] = ciot::tokenizer_encode(&tok, std::string(1, *cp).c_str());
+        }
     } else {
         n_prompt = ciot::tokenizer_encode_text(&tok, prompt, prompt_ids, 128);
     }
