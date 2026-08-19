@@ -1,3 +1,5 @@
+
+
 # Ciot
 
 a cpu inference engine for ternary neural networks. no dependencies. just c++ and simd. built by [@Cintu07](https://github.com/Cintu07).
@@ -14,7 +16,7 @@ this is not a full language model. the tokenizer is basic and the training scrip
 
 ## how it works, step by step
 
-**packing.** the python packer reads float32 weights, rounds them to -1, 0, or +1 using error compensation (the rounding error from one weight gets added to the next one so the overall signal is preserved), and writes two bit-planes per row into a .bits binary file. each file starts with a magic header that tells the loader how many rows and columns it has.
+**packing.** the python packer reads float32 weights, rounds them to -1, 0, or +1 using error compensation (the rounding error from one weight gets added to the next one so the overall signal is preserved), and writes two bit-planes per row into a .bits binary file. each file starts with a `CIOTBIT1` magic header that tells the loader how many rows and columns it has.
 
 **loading.** the c++ loader opens the .bits file, reads the header, allocates aligned memory (64-byte boundaries so simd instructions do not fault), and maps the bit-planes into a row-major struct. from this point onward, no file i/o happens during inference.
 
@@ -162,4 +164,3 @@ ciot/
 i wanted to know how fast ternary weights can run without any framework overhead. the answer is: pretty fast. and the simd kernels are verifiably correct because the checksums match.
 
 the project stays intentionally narrow. if a feature does not help run ternary weights faster, it goes in a python script outside the core. the core itself is one header, no std vector in hot loops, no runtime dispatch overhead beyond a single static flag, and cache aligned memory throughout.
-
