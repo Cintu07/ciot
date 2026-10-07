@@ -179,3 +179,11 @@ Bonsai 2 27B with T2P in the runtime (prio 2, mmap off):
   - k=2: 14.10 tok/s vs greedy 8.88 (1.59x).
   - k=3: 13.98 vs 9.36 (1.49x).
   - Oracle 204/204 and 229/229, junk 0/609 and 0/912, 0 token mismatches.
+## Why ngram speculation does nothing for Bonsai in the official server (root cause, from source)
+
+- `common_params_speculative::need_n_rs_seq()` returns 0 for ngram types, so the context gets no rollback ring.
+- `common_context_can_seq_rm` then reports SEQ_RM_TYPE_FULL for the hybrid model.
+- server-context.cpp therefore takes a full state checkpoint on every verify step ("speculative decoding will use checkpoints"), which costs more than the drafts save.
+- Proposed fix (not applied yet):
+  - Request the ring for ngram types too, capped. Bonsai's recurrent state is ~150 MB per ring slot, and ngram drafts default to 48–64 tokens, so an uncapped ring would need ~7 GB.
+  - Use short ngram drafts (2–3 tokens, which matches the 4-token SMMLA verify tile).

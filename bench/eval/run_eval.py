@@ -108,13 +108,20 @@ def main():
     ap.add_argument("--port", type=int, default=8091)
     ap.add_argument("--threads", type=int, default=8)
     ap.add_argument("--server-args", default="")
+    ap.add_argument("--server", default=SERVER, help="llama-server binary")
+    ap.add_argument("--gpu", action="store_true", help="offload all layers to the GPU instead of the laptop CPU settings")
+    ap.add_argument("--out", default=os.path.join(HERE, "results"))
     args = ap.parse_args()
 
-    out_dir = os.path.join(HERE, "results")
+    out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
     log = open(os.path.join(out_dir, f"{args.name}.server.log"), "w", encoding="utf-8")
-    cmd = [SERVER, "-m", args.model, "-t", str(args.threads), "-tb", str(args.threads), "--prio", "2", "--no-mmap",
-           "-c", "4096", "-np", "1", "--port", str(args.port), "--host", "127.0.0.1"] + args.server_args.split()
+    if args.gpu:
+        device = ["-ngl", "99"]
+    else:  # laptop CPU: high priority so Windows does not preempt spinning workers, weights read into RAM
+        device = ["-t", str(args.threads), "-tb", str(args.threads), "--prio", "2", "--no-mmap"]
+    cmd = [args.server, "-m", args.model] + device + ["-c", "4096", "-np", "1", "--port", str(args.port),
+                                                      "--host", "127.0.0.1"] + args.server_args.split()
     proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, cwd=ROOT, env=dict(os.environ, CIOT_T2="1"))
     try:
         load_s = wait_ready(args.port, proc)
@@ -123,6 +130,7 @@ def main():
         tasks = [("gsm8k", it) for it in load("gsm8k_test.jsonl", args.gsm)] + \
                 [("humaneval", it) for it in load("humaneval.jsonl", args.he)]
         results = []
+        partial = open(os.path.join(out_dir, f"{args.name}.partial.jsonl"), "w", encoding="utf-8", newline="\n")
         for idx, (kind, item) in enumerate(tasks):
             if kind == "gsm8k":
                 prompt = chat(f"{item['question']}\n\nSolve this step by step, briefly. "
@@ -145,15 +153,19 @@ def main():
                    "gen_n": tm.get("predicted_n"), "gen_ms": tm.get("predicted_ms"),
                    "truncated": r.get("truncated", False) or tm.get("predicted_n", 0) >= n_predict, "text": text}
             results.append(rec)
+            partial.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            partial.flush()
             print(f"[{args.name}] {idx + 1}/{len(tasks)} {kind} {'ok ' if ok else 'BAD'} {wall:6.1f}s "
                   f"gen {rec['gen_n']} tok", flush=True)
 
+        partial.close()
         with open(os.path.join(out_dir, f"{args.name}.jsonl"), "w", encoding="utf-8", newline="\n") as f:
             for rec in results:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
         summary = {"name": args.name, "model": os.path.basename(args.model),
-                   "model_gb": os.path.getsize(args.model) / 1e9, "load_s": load_s}
+                   "model_gb": os.path.getsize(args.model) / 1e9, "load_s": load_s,
+                   "device": "gpu" if args.gpu else "cpu"}
         for kind in ("gsm8k", "humaneval"):
             rs = [x for x in results if x["task"] == kind]
             if not rs:
@@ -164,6 +176,7 @@ def main():
             gen_ms = sum(x["gen_ms"] or 0 for x in rs)
             summary[kind] = {"n": len(rs), "correct": n_ok, "accuracy": n_ok / len(rs), "wall_s": wall,
                              "s_per_task": wall / len(rs), "s_per_correct": wall / max(n_ok, 1),
+                             "prompt_tokens": sum(x["prompt_n"] or 0 for x in rs),
                              "gen_tokens": gen, "decode_tok_s": gen / (gen_ms / 1000) if gen_ms else None,
                              "truncated": sum(x["truncated"] for x in rs)}
         with open(os.path.join(out_dir, f"{args.name}.summary.json"), "w", encoding="utf-8") as f:
