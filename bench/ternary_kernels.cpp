@@ -9,6 +9,7 @@
 #include <arm_neon.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -198,22 +199,49 @@ void run_rows(Kernel k, const Weights& m, const Acts& a, float* out, int r0, int
     }
 }
 
+// Persistent workers spinning on a generation counter, like an inference runtime's pool.
+// Spawning threads per matvec costs tens of microseconds each on Windows, which would
+// dominate a ~1 ms 8-thread run.
 double time_kernel(Kernel k, const Weights& m, const Acts& a, float* out, int threads, int iters) {
-    std::vector<double> runs;
-    for (int rep = 0; rep < 5; ++rep) {
-        auto t0 = std::chrono::steady_clock::now();
-        for (int it = 0; it < iters; ++it) {
-            std::vector<std::thread> pool;
-            for (int t = 0; t < threads; ++t) {
-                const int r0 = (int) ((int64_t) m.rows / 4 * t / threads) * 4, r1 = (int) ((int64_t) m.rows / 4 * (t + 1) / threads) * 4;
-                pool.emplace_back(run_rows, k, std::cref(m), std::cref(a), out, r0, r1);
+    std::atomic<int> generation{0}, done{0};
+    std::atomic<bool> quit{false};
+    auto slice = [&](int t) {
+        const int r0 = (int) ((int64_t) m.rows / 4 * t / threads) * 4, r1 = (int) ((int64_t) m.rows / 4 * (t + 1) / threads) * 4;
+        run_rows(k, m, a, out, r0, r1);
+    };
+    std::vector<std::thread> pool;
+    for (int t = 1; t < threads; ++t) {
+        pool.emplace_back([&, t] {
+            int seen = 0;
+            while (true) {
+                int g;
+                while ((g = generation.load(std::memory_order_acquire)) == seen) {
+                    if (quit.load(std::memory_order_relaxed)) return;
+                }
+                seen = g;
+                slice(t);
+                done.fetch_add(1, std::memory_order_acq_rel);
             }
-            for (auto& th : pool) th.join();
-        }
+        });
+    }
+    auto run_once = [&] {
+        done.store(0, std::memory_order_relaxed);
+        generation.fetch_add(1, std::memory_order_acq_rel);
+        slice(0);
+        while (done.load(std::memory_order_acquire) != threads - 1) {}
+    };
+
+    run_once(); // warm up
+    std::vector<double> runs;
+    for (int rep = 0; rep < 7; ++rep) {
+        auto t0 = std::chrono::steady_clock::now();
+        for (int it = 0; it < iters; ++it) run_once();
         runs.push_back(std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count() / iters);
     }
+    quit.store(true);
+    for (auto& th : pool) th.join();
     std::sort(runs.begin(), runs.end());
-    return runs[2];
+    return runs[3];
 }
 
 } // namespace

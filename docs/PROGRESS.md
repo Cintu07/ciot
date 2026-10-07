@@ -25,6 +25,16 @@ The first target is Ternary Bonsai 2 27B (prism-ml) on a Snapdragon X X126100 (8
 
 All kernels match an integer reference exactly. T2 is bit-identical to prism PQ2_0 on scaled inputs.
 
+The table above spawned threads per matvec. With a persistent spinning pool (bench/ternary_kernels_pool.txt, 8 threads):
+
+| kernel | Gweights/s | GB/s | 27B tok/s ceiling |
+|---|---|---|---|
+| prism PQ2_0 NEON | 232 | 61.5 | ~9 |
+| ciot T2x4 NEON | 391 | 103.7 | ~15 |
+
+T2 reaches ~94% of the measured 110 GB/s, so the matvec itself is now memory bound.
+From here, end-to-end speed depends on runtime overhead and the non-matmul ops, not the kernel.
+
 Two caveats:
 - The generic PTQ1_0 loop's speed depends heavily on how clang vectorizes it in a given translation unit. Use the real llama-bench number, not the harness, for "today".
 - PTQ1_0's base-3 decode is compute bound here. Storing 21% more bytes (2-bit) for ~2x less decode work wins on this CPU.

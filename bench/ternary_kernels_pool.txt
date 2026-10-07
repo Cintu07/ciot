@@ -1,0 +1,16 @@
+32768x8192 matvec, weights streamed from DRAM. Last column: compute-limited tok/s for Bonsai 2 27B.
+threads=1
+  prism PTQ1_0 generic   96.964 ms     2.8 Gweights/s    0.6 GB/s   1.0x vs today  ~ 0.1 tok/s
+  prism PQ2_0  NEON       8.606 ms    31.2 Gweights/s    8.3 GB/s  11.3x vs today  ~ 1.2 tok/s
+  ciot  PTQ1_0 NEON      10.336 ms    26.0 Gweights/s    5.7 GB/s   9.4x vs today  ~ 1.0 tok/s
+  ciot  T2x4   NEON       4.733 ms    56.7 Gweights/s   15.1 GB/s  20.5x vs today  ~ 2.2 tok/s
+threads=4
+  prism PTQ1_0 generic   24.292 ms    11.1 Gweights/s    2.4 GB/s   1.0x vs today  ~ 0.4 tok/s
+  prism PQ2_0  NEON       2.109 ms   127.3 Gweights/s   33.8 GB/s  11.5x vs today  ~ 5.0 tok/s
+  ciot  PTQ1_0 NEON       2.606 ms   103.0 Gweights/s   22.5 GB/s   9.3x vs today  ~ 4.0 tok/s
+  ciot  T2x4   NEON       1.215 ms   220.9 Gweights/s   58.7 GB/s  20.0x vs today  ~ 8.6 tok/s
+threads=8
+  prism PTQ1_0 generic   13.680 ms    19.6 Gweights/s    4.3 GB/s   1.0x vs today  ~ 0.8 tok/s
+  prism PQ2_0  NEON       1.159 ms   231.6 Gweights/s   61.5 GB/s  11.8x vs today  ~ 9.0 tok/s
+  ciot  PTQ1_0 NEON       2.153 ms   124.7 Gweights/s   27.3 GB/s   6.4x vs today  ~ 4.9 tok/s
+  ciot  T2x4   NEON       0.687 ms   390.5 Gweights/s  103.7 GB/s  19.9x vs today  ~15.3 tok/s
