@@ -1,2 +1,3 @@
 *.sh text eol=lf
 *.patch -text
+bench/prompts/*.txt -text
