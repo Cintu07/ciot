@@ -1,3 +1,321 @@
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index f24052c..098a847 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -28,6 +28,7 @@ else()
+     add_subdirectory(passkey)
+     add_subdirectory(retrieval)
+     add_subdirectory(rs-rollback)
++    add_subdirectory(ciot-spec)
+     add_subdirectory(simple)
+     add_subdirectory(simple-chat)
+     add_subdirectory(speculative)
+diff --git a/examples/ciot-spec/CMakeLists.txt b/examples/ciot-spec/CMakeLists.txt
+new file mode 100644
+index 0000000..18579a7
+--- /dev/null
++++ b/examples/ciot-spec/CMakeLists.txt
+@@ -0,0 +1,5 @@
++set(TARGET llama-ciot-spec)
++add_executable(${TARGET} ciot-spec.cpp)
++install(TARGETS ${TARGET} RUNTIME)
++target_link_libraries(${TARGET} PRIVATE llama ${CMAKE_THREAD_LIBS_INIT})
++target_compile_features(${TARGET} PRIVATE cxx_std_17)
+diff --git a/examples/ciot-spec/ciot-spec.cpp b/examples/ciot-spec/ciot-spec.cpp
+new file mode 100644
+index 0000000..b97467e
+--- /dev/null
++++ b/examples/ciot-spec/ciot-spec.cpp
+@@ -0,0 +1,289 @@
++// Greedy prompt-lookup speculative decoding for hybrid (recurrent + attention) models on CPU.
++//
++// Each step proposes up to k draft tokens by finding the most recent earlier occurrence of the
++// last g tokens in the context, verifies [next, draft...] in one llama_decode, keeps the matching
++// prefix, and rolls the recurrent state back with llama_memory_seq_rm, which restores a snapshot
++// from the n_rs_seq ring. Greedy speculation must reproduce plain greedy decoding, so the program
++// runs both and compares the token streams.
++//
++// usage: llama-ciot-spec -m model.gguf -f prompt.txt [-n 256] [-k 3] [-g 3] [-t 8]
++#include "llama.h"
++
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <vector>
++
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#endif
++
++static llama_token argmax(const float * logits, int n_vocab, float * margin = nullptr) {
++    llama_token best = 0;
++    for (int i = 1; i < n_vocab; i++) {
++        if (logits[i] > logits[best]) {
++            best = i;
++        }
++    }
++    if (margin) {
++        float second = -1e30f;
++        for (int i = 0; i < n_vocab; i++) {
++            if (i != best && logits[i] > second) {
++                second = logits[i];
++            }
++        }
++        *margin = logits[best] - second;
++    }
++    return best;
++}
++
++// Tokens that followed the most recent earlier occurrence of the context's last g tokens.
++// Falls back to shorter n-grams down to 2.
++static void lookup_draft(const std::vector<llama_token> & toks, int g_max, int k, std::vector<llama_token> & draft) {
++    draft.clear();
++    const int L = (int) toks.size();
++    for (int g = g_max; g >= 2 && draft.empty(); --g) {
++        if (L < g + 1) {
++            continue;
++        }
++        for (int i = L - g - 1; i >= 0; --i) {
++            if (std::memcmp(&toks[i], &toks[L - g], g * sizeof(llama_token)) == 0) {
++                for (int j = i + g; j < L && (int) draft.size() < k; ++j) {
++                    draft.push_back(toks[j]);
++                }
++                break;
++            }
++        }
++    }
++}
++
++struct run_stats {
++    std::vector<llama_token> out;
++    std::vector<float>       margin; // top1 - top2 logit gap behind each output token
++    std::vector<int>         n_batch_of; // size of the decode batch that produced each token's logits
++    double decode_s    = 0;
++    int    n_steps     = 0;
++    int    n_drafted   = 0;
++    int    n_accepted  = 0;
++};
++
++// Draft sources. ORACLE drafts the reference greedy continuation, so any rejection is batched
++// verification computing a different argmax than one-token decode (numerics, not rollback).
++// JUNK drafts tokens guaranteed to differ from the reference, so every step rolls back; the
++// output must still equal the reference if rollback restores the right state.
++enum draft_mode { DRAFT_LOOKUP, DRAFT_ORACLE, DRAFT_JUNK };
++
++static bool run(llama_model * model, const std::vector<llama_token> & prompt, int n_predict, int k, int g, int n_threads, run_stats & st,
++                draft_mode mode = DRAFT_LOOKUP, const std::vector<llama_token> * ref = nullptr) {
++    const llama_vocab * vocab   = llama_model_get_vocab(model);
++    const int           n_vocab = llama_vocab_n_tokens(vocab);
++
++    llama_context_params cparams = llama_context_default_params();
++    cparams.n_ctx           = (uint32_t) (prompt.size() + n_predict + k + 16);
++    cparams.n_batch         = 512;
++    cparams.n_ubatch        = 512;
++    cparams.n_threads       = n_threads;
++    cparams.n_threads_batch = n_threads;
++    cparams.n_rs_seq        = k > 0 ? (uint32_t) (k + 1) : 0; // plain greedy keeps the stock (ring-free) path
++    llama_context * ctx = llama_init_from_model(model, cparams);
++    if (!ctx) {
++        fprintf(stderr, "failed to create context\n");
++        return false;
++    }
++    llama_memory_t mem = llama_get_memory(ctx);
++
++    llama_batch pb = llama_batch_get_one(const_cast<llama_token *>(prompt.data()), (int32_t) prompt.size());
++    if (llama_decode(ctx, pb)) {
++        fprintf(stderr, "prompt decode failed\n");
++        return false;
++    }
++
++    std::vector<llama_token> toks = prompt;
++    std::vector<llama_token> draft;
++    llama_batch batch = llama_batch_init(k + 1, 0, 1);
++    int         n_past = (int) prompt.size();
++    float       next_margin = 0;
++    int         next_batch  = (int) prompt.size();
++    llama_token next   = argmax(llama_get_logits_ith(ctx, -1), n_vocab, &next_margin);
++
++    const auto t0 = std::chrono::steady_clock::now();
++    while ((int) st.out.size() < n_predict) {
++        if (llama_vocab_is_eog(vocab, next)) {
++            break;
++        }
++        st.out.push_back(next);
++        st.margin.push_back(next_margin);
++        st.n_batch_of.push_back(next_batch);
++        toks.push_back(next);
++        if ((int) st.out.size() >= n_predict) {
++            break;
++        }
++
++        const int k_now = std::min(k, n_predict - (int) st.out.size());
++        draft.clear();
++        if (k > 0 && mode == DRAFT_LOOKUP) {
++            lookup_draft(toks, g, k_now, draft);
++        } else if (k > 0 && ref) {
++            for (int i = 0; i < k_now && st.out.size() + i < ref->size(); ++i) {
++                const llama_token r = (*ref)[st.out.size() + i];
++                draft.push_back(mode == DRAFT_ORACLE ? r : (r + 1) % n_vocab);
++            }
++        }
++
++        batch.n_tokens = 1 + (int32_t) draft.size();
++        for (int i = 0; i < batch.n_tokens; ++i) {
++            batch.token[i]     = i == 0 ? next : draft[i - 1];
++            batch.pos[i]       = n_past + i;
++            batch.n_seq_id[i]  = 1;
++            batch.seq_id[i][0] = 0;
++            batch.logits[i]    = true;
++        }
++        if (llama_decode(ctx, batch)) {
++            fprintf(stderr, "decode failed at pos %d\n", n_past);
++            return false;
++        }
++        st.n_steps++;
++        st.n_drafted += (int) draft.size();
++
++        int         a    = 0;
++        float       m    = 0;
++        llama_token pred = argmax(llama_get_logits_ith(ctx, 0), n_vocab, &m);
++        while (a < (int) draft.size() && pred == draft[a] && !llama_vocab_is_eog(vocab, pred) && (int) st.out.size() < n_predict) {
++            st.out.push_back(draft[a]);
++            st.margin.push_back(m);
++            st.n_batch_of.push_back(batch.n_tokens);
++            toks.push_back(draft[a]);
++            ++a;
++            pred = argmax(llama_get_logits_ith(ctx, a), n_vocab, &m);
++        }
++        next_margin = m;
++        next_batch  = batch.n_tokens;
++        st.n_accepted += a;
++        n_past += 1 + a;
++
++        if (a < (int) draft.size() && !llama_memory_seq_rm(mem, 0, n_past, -1)) {
++            fprintf(stderr, "rollback refused at pos %d (n_rs_seq=%u)\n", n_past, llama_n_rs_seq(ctx));
++            return false;
++        }
++        next = pred;
++    }
++    st.decode_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
++
++    llama_batch_free(batch);
++    llama_free(ctx);
++    return true;
++}
++
++int main(int argc, char ** argv) {
++    std::string model_path, prompt_path, prompt = "def fib(n):";
++    int n_predict = 256, k = 3, g = 3, n_threads = 8;
++    bool check = false; // also run oracle and junk drafts
++    for (int i = 1; i < argc; i++) {
++        if (!strcmp(argv[i], "-m") && i + 1 < argc)      model_path  = argv[++i];
++        else if (!strcmp(argv[i], "-f") && i + 1 < argc) prompt_path = argv[++i];
++        else if (!strcmp(argv[i], "-p") && i + 1 < argc) prompt      = argv[++i];
++        else if (!strcmp(argv[i], "-n") && i + 1 < argc) n_predict   = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "-k") && i + 1 < argc) k           = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "-g") && i + 1 < argc) g           = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "-t") && i + 1 < argc) n_threads   = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "--check"))            check       = true;
++    }
++    if (model_path.empty()) {
++        fprintf(stderr, "usage: %s -m model.gguf [-f prompt.txt | -p text] [-n 256] [-k 3] [-g 3] [-t 8]\n", argv[0]);
++        return 1;
++    }
++    if (!prompt_path.empty()) {
++        std::ifstream f(prompt_path, std::ios::binary);
++        std::stringstream ss;
++        ss << f.rdbuf();
++        prompt = ss.str();
++    }
++
++#if defined(_WIN32)
++    // Same effect as llama-bench --prio 2: keeps Windows from preempting spinning workers.
++    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
++#endif
++
++    llama_backend_init();
++    llama_model_params mparams = llama_model_default_params();
++    mparams.load_mode          = LLAMA_LOAD_MODE_NONE; // read into RAM; mmap pages get evicted next to the repacked copy
++    llama_model * model        = llama_model_load_from_file(model_path.c_str(), mparams);
++    if (!model) {
++        fprintf(stderr, "failed to load model\n");
++        return 1;
++    }
++    const llama_vocab * vocab = llama_model_get_vocab(model);
++
++    const int n_prompt = -llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), NULL, 0, true, true);
++    std::vector<llama_token> ptoks(n_prompt);
++    llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), ptoks.data(), n_prompt, true, true);
++    if (n_prompt > 500) {
++        fprintf(stderr, "prompt is %d tokens, keep it under 500 so it fits one micro-batch\n", n_prompt);
++        return 1;
++    }
++
++    run_stats base, spec;
++    if (!run(model, ptoks, n_predict, 0, g, n_threads, base)) {
++        return 1;
++    }
++    if (check) {
++        for (draft_mode m : {DRAFT_ORACLE, DRAFT_JUNK}) {
++            run_stats st;
++            if (!run(model, ptoks, n_predict, k, g, n_threads, st, m, &base.out)) {
++                return 1;
++            }
++            int first = -1;
++            for (size_t i = 0; i < base.out.size() && i < st.out.size(); ++i) {
++                if (base.out[i] != st.out[i]) { first = (int) i; break; }
++            }
++            printf("check %-6s : %d/%d drafts accepted, first mismatch vs greedy: %s\n", m == DRAFT_ORACLE ? "oracle" : "junk",
++                   st.n_accepted, st.n_drafted, first < 0 ? "none" : std::to_string(first).c_str());
++        }
++    }
++    if (!run(model, ptoks, n_predict, k, g, n_threads, spec)) {
++        return 1;
++    }
++
++    size_t mismatch = 0;
++    int    first    = -1;
++    for (size_t i = 0; i < base.out.size() && i < spec.out.size(); ++i) {
++        if (base.out[i] != spec.out[i]) {
++            mismatch++;
++            if (first < 0) first = (int) i;
++        }
++    }
++
++    std::string text;
++    for (llama_token t : spec.out) {
++        char buf[256];
++        const int n = llama_token_to_piece(vocab, t, buf, sizeof(buf), 0, true);
++        if (n > 0) text.append(buf, n);
++    }
++
++    printf("\n--- output (speculative) ---\n%s\n---\n", text.c_str());
++    printf("prompt tokens     : %d\n", n_prompt);
++    printf("greedy            : %zu tokens in %.2f s = %.2f tok/s\n", base.out.size(), base.decode_s, base.out.size() / base.decode_s);
++    printf("speculative (k=%d) : %zu tokens in %.2f s = %.2f tok/s, %d verify steps, %d/%d drafts accepted (%.0f%%)\n",
++           k, spec.out.size(), spec.decode_s, spec.out.size() / spec.decode_s, spec.n_steps, spec.n_accepted, spec.n_drafted,
++           spec.n_drafted ? 100.0 * spec.n_accepted / spec.n_drafted : 0.0);
++    printf("speedup           : %.2fx\n", base.decode_s / spec.decode_s);
++    printf("token mismatches  : %zu%s\n", mismatch, first >= 0 ? (" (first at " + std::to_string(first) + ")").c_str() : "");
++    if (first >= 0) {
++        printf("at first mismatch : greedy picked %d (margin %.4f, %d-token batch), speculative picked %d (margin %.4f, %d-token batch)\n",
++               base.out[first], base.margin[first], base.n_batch_of[first], spec.out[first], spec.margin[first], spec.n_batch_of[first]);
++        float min_margin = 1e30f;
++        for (int i = 0; i < first; ++i) {
++            min_margin = std::min(min_margin, base.margin[i]);
++        }
++        printf("smallest greedy margin before it : %.4f\n", min_margin);
++    }
++
++    llama_model_free(model);
++    llama_backend_free();
++    return 0;
++}
 diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
 index f22018a..c248cc2 100644
 --- a/ggml/src/ggml-cpu/arch-fallback.h
