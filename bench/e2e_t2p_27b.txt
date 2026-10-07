@@ -1,0 +1,21 @@
+ppl T2P: [1]9.2430,[2]7.3521,[3]10.0138, 17.47 seconds per pass
+bench round 1:             pp64           32.34 ± 1.28               tg32            9.81 ± 0.08   
+bench round 2:             pp64           31.12 ± 0.87               tg32            9.51 ± 0.48   
+== code_edit k=2
+check oracle : 204/204 drafts accepted, first mismatch vs greedy: none
+check junk   : 0/609 drafts accepted, first mismatch vs greedy: none
+--- output (speculative) ---
+greedy            : 306 tokens in 34.47 s = 8.88 tok/s
+speculative (k=2) : 306 tokens in 21.71 s = 14.10 tok/s, 157 verify steps, 149/196 drafts accepted (76%)
+speedup           : 1.59x
+token mismatches  : 0
+== code_edit k=3
+check oracle : 229/229 drafts accepted, first mismatch vs greedy: none
+check junk   : 0/912 drafts accepted, first mismatch vs greedy: none
+--- output (speculative) ---
+greedy            : 306 tokens in 32.68 s = 9.36 tok/s
+speculative (k=3) : 306 tokens in 21.89 s = 13.98 tok/s, 136 verify steps, 170/231 drafts accepted (74%)
+speedup           : 1.49x
+token mismatches  : 0
+
+[exited with code 0]
