@@ -105,3 +105,44 @@ At this point PTQ1_0 matmul runs at ~112 Gweights/s, limited by base-3 decode. T
 
 - T2 perplexity on the 27B, 3x128 tokens: 9.2430 / 7.3521 / 10.0138 per chunk with T2 on and off, bit-identical.
 - Perplexity pass time: 51.4 s -> 17.4 s.
+
+## Profile of T2 decode on the 27B (CIOT_PROF=1, prio 2, mmap off)
+
+- Matmuls take ~92 ms per token, about 74 GB/s.
+- bench/decode_replay.cpp replays one token's 401 real-shape matvecs:
+  - ggml-style chunking: 70 ms.
+  - Static slices: 65.5 ms.
+  - Fusing gate+up and q+k+v: 61.5 ms.
+- The rest is runtime overhead: about 19 ms of recurrent-state gather and copy ops, plus norms and similar.
+- With mmap on, the token-embedding lookup cost ~21 ms per token (page faults next to the repacked copy). `-mmp 0` removes it.
+- `--poll 100` made no difference.
+
+## Speculative decoding on the hybrid 27B (examples/ciot-spec in the patch)
+
+How it works:
+- Prompt-lookup drafts.
+- Verify [next, drafts] in one batch.
+- Roll the recurrent state back with llama_memory_seq_rm through the n_rs_seq snapshot ring.
+
+Findings about the official runtime:
+- `common_params_speculative::need_n_rs_seq()` only requests the ring for draft-model types, not ngram types. That is probably why KNOWN_ISSUES says ngram has no effect on this model; not verified against their server.
+- The ring is filled from the current ubatch only. Upstream's rs-rollback example (one token per decode, rewind 4) therefore fails on the 27B with stock kernels too: 54/64 mismatches, first at the first rollback.
+- Speculation only rolls back within the last verify batch, which this design supports.
+
+Correctness checks on the 27B (ciot-spec --check):
+- Oracle drafts (the true greedy continuation): 90/90 accepted, no mismatch. Batched verify picks the same tokens as one-token decode.
+- Junk drafts (always wrong): 0/354 accepted, no mismatch. Rollback is exact on every step.
+- Lookup mode diverged once on raw text, at a near-tie: greedy top-2 margin 0.032 vs 0.0004; every earlier token had at least 0.17. That is float batch-history noise, not corruption.
+
+Runtime fix: leftover verify rows (batch size not a multiple of 4) used to stream the weights once per row. They now go through one zero-padded SMMLA pass. Oracle and junk checks still pass at k=1 and k=2.
+
+Code-edit prompt (bench/prompts/code_edit_chat.txt, thinking pre-closed, 306 tokens, greedy 9.2–9.5 tok/s):
+
+| k | acceptance | speedup | mismatches |
+|---|---|---|---|
+| 1 | 84% | 1.14x | 0 |
+| 2 | 79% | 1.37x | 0 |
+| 3 | 75% | 1.38–1.43x | 0 |
+| 5 | 65% | 1.23x | 0 |
+
+Limit: a 4-token verify step costs ~1.4x a single-token step, because i8mm at 4 columns is compute bound (~133 ms of math vs a 68 ms memory floor). Making verify cheaper means a faster SMMLA kernel. One option is a row-pair-interleaved T2 layout that needs no zips.
