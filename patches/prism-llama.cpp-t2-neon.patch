@@ -23,10 +23,10 @@ index 0000000..18579a7
 +target_compile_features(${TARGET} PRIVATE cxx_std_17)
 diff --git a/examples/ciot-spec/ciot-spec.cpp b/examples/ciot-spec/ciot-spec.cpp
 new file mode 100644
-index 0000000..b97467e
+index 0000000..eb70e95
 --- /dev/null
 +++ b/examples/ciot-spec/ciot-spec.cpp
-@@ -0,0 +1,289 @@
+@@ -0,0 +1,315 @@
 +// Greedy prompt-lookup speculative decoding for hybrid (recurrent + attention) models on CPU.
 +//
 +// Each step proposes up to k draft tokens by finding the most recent earlier occurrence of the
@@ -107,6 +107,8 @@ index 0000000..b97467e
 +// output must still equal the reference if rollback restores the right state.
 +enum draft_mode { DRAFT_LOOKUP, DRAFT_ORACLE, DRAFT_JUNK };
 +
++static bool adaptive = true; // --no-adaptive drafts on every step
++
 +static bool run(llama_model * model, const std::vector<llama_token> & prompt, int n_predict, int k, int g, int n_threads, run_stats & st,
 +                draft_mode mode = DRAFT_LOOKUP, const std::vector<llama_token> * ref = nullptr) {
 +    const llama_vocab * vocab   = llama_model_get_vocab(model);
@@ -140,6 +142,12 @@ index 0000000..b97467e
 +    int         next_batch  = (int) prompt.size();
 +    llama_token next   = argmax(llama_get_logits_ith(ctx, -1), n_vocab, &next_margin);
 +
++    // Adaptive drafting: a verify batch costs more than a single-token step, so when recent
++    // drafts keep getting rejected (free-form prose), stop drafting for a while, then probe again.
++    float accept_ema = 1.0f;
++    int   cooldown   = 0;
++    int   backoff    = 8; // doubles every time drafting fails again, resets when a probe pays off
++
 +    const auto t0 = std::chrono::steady_clock::now();
 +    while ((int) st.out.size() < n_predict) {
 +        if (llama_vocab_is_eog(vocab, next)) {
@@ -156,7 +164,11 @@ index 0000000..b97467e
 +        const int k_now = std::min(k, n_predict - (int) st.out.size());
 +        draft.clear();
 +        if (k > 0 && mode == DRAFT_LOOKUP) {
-+            lookup_draft(toks, g, k_now, draft);
++            if (adaptive && cooldown > 0) {
++                cooldown--;
++            } else {
++                lookup_draft(toks, g, k_now, draft);
++            }
 +        } else if (k > 0 && ref) {
 +            for (int i = 0; i < k_now && st.out.size() + i < ref->size(); ++i) {
 +                const llama_token r = (*ref)[st.out.size() + i];
@@ -193,6 +205,17 @@ index 0000000..b97467e
 +        next_margin = m;
 +        next_batch  = batch.n_tokens;
 +        st.n_accepted += a;
++        if (!draft.empty()) {
++            const float rate = (float) a / (float) draft.size();
++            accept_ema = 0.7f * accept_ema + 0.3f * rate;
++            if (accept_ema < 0.3f) {
++                cooldown   = backoff;                 // skip drafting for a while
++                backoff    = std::min(backoff * 2, 64);
++                accept_ema = 0.5f;                    // then probe from a neutral estimate
++            } else if (rate >= 0.5f) {
++                backoff = 8;
++            }
++        }
 +        n_past += 1 + a;
 +
 +        if (a < (int) draft.size() && !llama_memory_seq_rm(mem, 0, n_past, -1)) {
@@ -221,6 +244,7 @@ index 0000000..b97467e
 +        else if (!strcmp(argv[i], "-g") && i + 1 < argc) g           = atoi(argv[++i]);
 +        else if (!strcmp(argv[i], "-t") && i + 1 < argc) n_threads   = atoi(argv[++i]);
 +        else if (!strcmp(argv[i], "--check"))            check       = true;
++        else if (!strcmp(argv[i], "--no-adaptive"))      adaptive    = false;
 +    }
 +    if (model_path.empty()) {
 +        fprintf(stderr, "usage: %s -m model.gguf [-f prompt.txt | -p text] [-n 256] [-k 3] [-g 3] [-t 8]\n", argv[0]);
@@ -232,6 +256,8 @@ index 0000000..b97467e
 +        ss << f.rdbuf();
 +        prompt = ss.str();
 +    }
++
++    setvbuf(stdout, nullptr, _IONBF, 0); // results survive even if teardown crashes
 +
 +#if defined(_WIN32)
 +    // Same effect as llama-bench --prio 2: keeps Windows from preempting spinning workers.
@@ -514,7 +540,7 @@ index dd40c28..850690f 100644
  
  #ifdef GGML_USE_OPENMP
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 4471c9a..9050fe1 100644
+index 4471c9a..ddefd90 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
 @@ -447,6 +447,269 @@ template <> inline void ggml_repack_quantize_mat<block_q1_0, 8, GGML_TYPE_Q8_0>(
@@ -819,7 +845,7 @@ index 4471c9a..9050fe1 100644
  #if defined __riscv_zvfh
  template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
      ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
-@@ -4830,6 +5111,12 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+@@ -4830,6 +5111,59 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
      ggml_gemm_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
  }
  
@@ -829,10 +855,74 @@ index 4471c9a..9050fe1 100644
 +}
 +#endif
 +
++// The 1..3 activation rows left over after the 4-row gemm tiles. Default: one gemv per row,
++// which streams the weights once per row. s is the first leftover row's output, ds its row
++// stride in floats; vy the first leftover quantized row, vy_stride its row stride in bytes.
++template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE>
++void gemv_rows(int n, float * s, size_t ds, size_t bs, const void * vx, const char * vy, size_t vy_stride, int nrows, int nc) {
++    for (int r = 0; r < nrows; r++) {
++        gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(n, s + r * ds, bs, vx, vy + r * vy_stride, 1, nc);
++    }
++}
++
++#if defined(GGML_CIOT_T2) && defined(__ARM_FEATURE_MATMUL_INT8)
++// T2: 2 or 3 leftover rows (short speculative verify batches) are zero-padded into one Q8_Kx4
++// group and run through the SMMLA kernel, so the weights are streamed once instead of per row.
++template <> void gemv_rows<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t ds, size_t bs, const void * vx, const char * vy, size_t vy_stride, int nrows, int nc) {
++    if (nrows == 1) {
++        gemv<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(n, s, bs, vx, vy, 1, nc);
++        return;
++    }
++    const int nbk = n / QK_K;
++    thread_local std::vector<block_q8_Kx4> y4;
++    thread_local std::vector<float>        out;
++    y4.resize(nbk);
++    out.resize((size_t) 4 * nc);
++    for (int b = 0; b < nbk; ++b) {
++        block_q8_Kx4 & dst = y4[b];
++        for (int r = 0; r < 4; ++r) {
++            if (r < nrows) {
++                const block_q8_K * src = (const block_q8_K *) (vy + r * vy_stride) + b;
++                dst.d[r] = src->d;
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memcpy(dst.qs + 32 * c + 8 * r, src->qs + 8 * c, 8);
++                }
++            } else {
++                dst.d[r] = 0.0f;
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memset(dst.qs + 32 * c + 8 * r, 0, 8);
++                }
++            }
++        }
++    }
++    ggml_ciot_gemm_t2x4_q8_K(n, out.data(), (size_t) nc, vx, y4.data(), 4, nc);
++    for (int r = 0; r < nrows; ++r) {
++        memcpy(s + r * ds, out.data() + (size_t) r * nc, (size_t) nc * sizeof(float));
++    }
++}
++#endif
++
  #if defined __riscv_zvfh
  template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
      ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
-@@ -5262,6 +5549,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -4945,10 +5279,12 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+                                                              src0_ptr + src0_start * nb01, src1_ptr,
+                                                              nrows - (nrows % 4), ncols);
+         }
+-        for (int iter = nrows - (nrows % 4); iter < nrows; iter++) {
+-            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, (float *) (dst_ptr + (iter * nb1)) + src0_start,
+-                                                             ne01, src0_ptr + src0_start * nb01,
+-                                                             src1_ptr + (src1_col_stride * iter), 1 /* nrows */, ncols);
++        const int64_t first_left = nrows - (nrows % 4);
++        if (first_left < nrows) {
++            gemv_rows<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, (float *) (dst_ptr + (first_left * nb1)) + src0_start, nb1 / sizeof(float),
++                                                                  ne01, src0_ptr + src0_start * nb01,
++                                                                  src1_ptr + (src1_col_stride * first_left), src1_col_stride,
++                                                                  (int) (nrows - first_left), ncols);
+         }
+     }
+ 
+@@ -5262,6 +5598,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
  
      // instance for Q2_0
      static const ggml::cpu::repack::tensor_traits<block_pq2_0, 8, 4, GGML_TYPE_Q8_0> pq2_0_4x8_q8_0;
@@ -842,7 +932,7 @@ index 4471c9a..9050fe1 100644
  
      // instances for RISC-V
      //
-@@ -5451,6 +5741,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5451,6 +5790,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
                  return &pq2_0_4x8_q8_0;
              }
          }

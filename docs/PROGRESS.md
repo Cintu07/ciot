@@ -146,3 +146,13 @@ Code-edit prompt (bench/prompts/code_edit_chat.txt, thinking pre-closed, 306 tok
 | 5 | 65% | 1.23x | 0 |
 
 Limit: a 4-token verify step costs ~1.4x a single-token step, because i8mm at 4 columns is compute bound (~133 ms of math vs a 68 ms memory floor). Making verify cheaper means a faster SMMLA kernel. One option is a row-pair-interleaved T2 layout that needs no zips.
+
+Adaptive drafting: an acceptance EMA, with a cooldown when it drops below 0.3 that doubles each time drafting keeps failing (8 up to 64 steps).
+
+| prompt | drafting | drafts tried | speedup |
+|---|---|---|---|
+| explain_chat k=3 | fixed | 196 | 0.91x |
+| explain_chat k=3 | adaptive + backoff | 90 | 0.96x |
+| code_edit_chat k=2 | adaptive + backoff | 196 | 1.39x (76% accepted, 0 mismatches) |
+
+The remaining ~4% on prose is not drafting: with backoff it barely drafts. It is the snapshot ring itself, which writes recurrent-state snapshots on every token once n_rs_seq > 0. Greedy runs without the ring.
