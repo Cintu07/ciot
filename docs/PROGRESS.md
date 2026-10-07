@@ -156,3 +156,26 @@ Adaptive drafting: an acceptance EMA, with a cooldown when it drops below 0.3 th
 | code_edit_chat k=2 | adaptive + backoff | 196 | 1.39x (76% accepted, 0 mismatches) |
 
 The remaining ~4% on prose is not drafting: with backoff it barely drafts. It is the snapshot ring itself, which writes recurrent-state snapshots on every token once n_rs_seq > 0. Greedy runs without the ring.
+
+## T2P: row-pair layout (kernels/t2p.c, bench/t2p_bench.txt)
+
+- Same 136-byte block as T2, with rows grouped in pairs.
+- Byte j of word w of pair p holds row 2p + (j >= 8), weight 8(4w + s) + (j & 7) in slot s.
+  A decoded slot is [row A: 8 weights | row B: same chunk], which is an SMMLA operand as-is, so no zips are needed.
+- The single-token kernel uses SDOT against a duplicated 8-byte activation chunk, with 8 independent accumulator chains.
+- Bit-identical to T2 and PQ2_0.
+
+| 8 threads | T2 | T2P |
+|---|---|---|
+| matvec 32768x8192 | 100.6 GB/s | 107.0 GB/s |
+| SMMLA, 4 tokens (verify) | 862 GMAC/s | 1136 GMAC/s |
+| SMMLA, 64 tokens (prompt) | 850 GMAC/s | 1076 GMAC/s |
+
+Bonsai 2 27B with T2P in the runtime (prio 2, mmap off):
+- Perplexity 9.2430 / 7.3521 / 10.0138, identical to stock.
+- pp64: 32.3 and 31.1 tok/s (T2: 27.2; stock PQ2_0: 8.4).
+- tg32: 9.81 and 9.51 tok/s (T2: 9.4).
+- Speculative code edit:
+  - k=2: 14.10 tok/s vs greedy 8.88 (1.59x).
+  - k=3: 13.98 vs 9.36 (1.49x).
+  - Oracle 204/204 and 229/229, junk 0/609 and 0/912, 0 token mismatches.
