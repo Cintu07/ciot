@@ -1,0 +1,7 @@
+models/
+vendor/
+build/
+*.gguf
+*.exe
+*.log
+models/*.txt

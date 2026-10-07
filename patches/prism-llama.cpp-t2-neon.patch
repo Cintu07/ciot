@@ -1,0 +1,233 @@
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index 4471c9a..339478c 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -447,6 +447,159 @@ template <> inline void ggml_repack_quantize_mat<block_q1_0, 8, GGML_TYPE_Q8_0>(
+     ggml_quantize_mat_q8_0_4x8_g128(x, vy, n_per_row);
+ }
+ 
++#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
++// CIOT T2 layout for PQ2_0 on AArch64 (repack tag: INTER_SIZE 16, NB_COLS 4, Q8_K activations).
++//
++// Same bits as PQ2_0 (2-bit codes u = w + 1, one fp16 scale per 128 weights), rearranged so NEON
++// decodes them with one AND or shift per 16 weights instead of a table lookup, shift, mask and
++// subtract:
++//   - byte j (0..15) of 64-weight group g holds weights 64g + j + 16s in bits 2s..2s+1 (s = 0..3);
++//   - the +1 offset is removed once per block with the activation sums Q8_K already carries;
++//   - four rows share each 128-weight block so they share every activation load.
++// A block of 4 rows is 136 bytes, exactly 4 * sizeof(block_pq2_0), so the repack is in place.
++#include <arm_neon.h>
++#include <cstdlib>
++#include <vector>
++
++#define GGML_CIOT_T2 1
++
++struct block_pq2_0_t2x4 {
++    ggml_half d[4];
++    uint8_t   qs[2][4][16]; // [group][row][byte]
++};
++static_assert(sizeof(block_pq2_0_t2x4) == 4 * sizeof(block_pq2_0), "t2x4 must repack PQ2_0 in place");
++
++static bool ggml_ciot_t2_enabled() {
++    static const bool enabled = [] {
++        const char * v = getenv("CIOT_T2");
++        return !(v && v[0] == '0');
++    }();
++    return enabled;
++}
++
++// s[0..3] = dot(row r, y) for the 4 rows interleaved in x. n is a multiple of QK_K.
++static void ggml_ciot_gemv_t2x4_q8_K(int n, float * GGML_RESTRICT s, const block_pq2_0_t2x4 * GGML_RESTRICT x, const block_q8_K * GGML_RESTRICT y) {
++    const int nb = n / QK_PQ2_0;
++    const uint8x16_t mask_s0 = vdupq_n_u8(0x03);
++    const uint8x16_t mask_s1 = vdupq_n_u8(0x0C);
++    const uint8x16_t mask_s2 = vdupq_n_u8(0x30);
++
++    float32x4_t acc = vdupq_n_f32(0.0f);
++
++    for (int i = 0; i < nb; ++i) {
++        const block_q8_K * GGML_RESTRICT yb = y + (i >> 1);
++        const int8_t * GGML_RESTRICT q8 = yb->qs + 128 * (i & 1);
++        const int32_t ysum = vaddlvq_s16(vld1q_s16(yb->bsums + 8 * (i & 1)));
++
++        int8x16_t yv[2][4];
++        for (int g = 0; g < 2; ++g) {
++            for (int sl = 0; sl < 4; ++sl) {
++                yv[g][sl] = vld1q_s8(q8 + 64 * g + 16 * sl);
++            }
++        }
++
++        // Slots 1 and 2 are masked in place, so their dots come out scaled by 4 and 16.
++        int32x4_t row_sum[4];
++        for (int r = 0; r < 4; ++r) {
++            int32x4_t a1 = vdupq_n_s32(0), a4 = vdupq_n_s32(0), a16 = vdupq_n_s32(0);
++            for (int g = 0; g < 2; ++g) {
++                const uint8x16_t v = vld1q_u8(x[i].qs[g][r]);
++                a1  = vdotq_s32(a1,  vreinterpretq_s8_u8(vandq_u8(v, mask_s0)), yv[g][0]);
++                a4  = vdotq_s32(a4,  vreinterpretq_s8_u8(vandq_u8(v, mask_s1)), yv[g][1]);
++                a16 = vdotq_s32(a16, vreinterpretq_s8_u8(vandq_u8(v, mask_s2)), yv[g][2]);
++                a1  = vdotq_s32(a1,  vreinterpretq_s8_u8(vshrq_n_u8(v, 6)),     yv[g][3]);
++            }
++            row_sum[r] = vmlaq_n_s32(vmlaq_n_s32(a16, a4, 4), a1, 16); // 16 * (u . y)
++        }
++
++        // Lane r = 16 * (u . y) for row r; subtracting 16 * sum(y) turns u = w + 1 back into w.
++        int32x4_t tot = vpaddq_s32(vpaddq_s32(row_sum[0], row_sum[1]), vpaddq_s32(row_sum[2], row_sum[3]));
++        tot = vsubq_s32(tot, vdupq_n_s32(16 * ysum));
++
++        const float32x4_t dw = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16((const uint16_t *) x[i].d)));
++        acc = vfmaq_f32(acc, vcvtq_f32_s32(tot), vmulq_n_f32(dw, yb->d * (1.0f / 16.0f)));
++    }
++
++    vst1q_f32(s, acc);
++}
++
++static int repack_pq2_0_to_t2x4(struct ggml_tensor * t, const void * GGML_RESTRICT data, size_t data_size) {
++    GGML_ASSERT(t->type == GGML_TYPE_PQ2_0);
++    const int64_t nrow = ggml_nrows(t);
++    const int64_t nb   = t->ne[0] / QK_PQ2_0;
++    GGML_ASSERT(data_size == (size_t) nrow * nb * sizeof(block_pq2_0));
++    if (nrow % 4 != 0 || t->ne[0] % QK_K != 0) {
++        return -1;
++    }
++
++    const block_pq2_0 * src = (const block_pq2_0 *) data;
++    block_pq2_0_t2x4 *  dst = (block_pq2_0_t2x4 *) t->data;
++
++    for (int64_t r4 = 0; r4 < nrow; r4 += 4) {
++        for (int64_t i = 0; i < nb; ++i) {
++            block_pq2_0_t2x4 out;
++            for (int r = 0; r < 4; ++r) {
++                const block_pq2_0 & b = src[(r4 + r) * nb + i];
++                out.d[r] = b.d;
++                for (int g = 0; g < 2; ++g) {
++                    for (int j = 0; j < 16; ++j) {
++                        uint8_t byte = 0;
++                        for (int sl = 0; sl < 4; ++sl) {
++                            const int w = 64 * g + j + 16 * sl; // PQ2_0 keeps weight w at qs[w / 4], bits 2 * (w % 4)
++                            byte |= (uint8_t) (((b.qs[w / 4] >> (2 * (w % 4))) & 3) << (2 * sl));
++                        }
++                        out.qs[g][r][j] = byte;
++                    }
++                }
++            }
++            dst[(r4 / 4) * nb + i] = out;
++        }
++    }
++    return 0;
++}
++
++// Prompt batches arrive as block_q8_Kx4 (8-byte interleave). Split each group of four
++// activation rows back into plain block_q8_K rows and reuse the decode kernel.
++static void ggml_ciot_gemm_t2x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    const int nb  = n / QK_PQ2_0;
++    const int nbk = n / QK_K;
++    const block_pq2_0_t2x4 * x  = (const block_pq2_0_t2x4 *) vx;
++    const block_q8_Kx4 *     y4 = (const block_q8_Kx4 *) vy;
++
++    thread_local std::vector<block_q8_K> rows;
++    rows.resize((size_t) 4 * nbk);
++
++    for (int yg = 0; yg < nr / 4; ++yg) {
++        for (int b = 0; b < nbk; ++b) {
++            const block_q8_Kx4 & src = y4[(size_t) yg * nbk + b];
++            for (int r = 0; r < 4; ++r) {
++                block_q8_K & dst = rows[(size_t) r * nbk + b];
++                dst.d = src.d[r];
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memcpy(dst.qs + 8 * c, src.qs + 32 * c + 8 * r, 8);
++                }
++                for (int j = 0; j < QK_K / 16; ++j) {
++                    int sum = 0;
++                    for (int k = 0; k < 16; ++k) {
++                        sum += dst.qs[16 * j + k];
++                    }
++                    dst.bsums[j] = (int16_t) sum;
++                }
++            }
++        }
++        for (int r = 0; r < 4; ++r) {
++            for (int c = 0; c < nc; c += 4) {
++                ggml_ciot_gemv_t2x4_q8_K(n, s + (size_t) (4 * yg + r) * bs + c, x + (size_t) (c / 4) * nb, rows.data() + (size_t) r * nbk);
++            }
++        }
++    }
++}
++
++template <> inline void ggml_repack_quantize_mat<block_pq2_0, 16, GGML_TYPE_Q8_K>(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t nrow, int64_t n_per_row) {
++    ggml_quantize_mat_t<8, GGML_TYPE_Q8_K>(x, vy, nrow, n_per_row);
++}
++#endif // __aarch64__ && __ARM_FEATURE_DOTPROD
++
+ template <int M, int N>
+ static void ggml_gemv_q6_K_NxM_q8_K_generic_impl(int                        n,
+                                                  float * GGML_RESTRICT      s,
+@@ -4612,6 +4765,12 @@ template <> int repack<block_pq2_0, 8, 4>(struct ggml_tensor * t, const void * d
+     return repack_pq2_0_to_pq2_0_4_bl(t, 8, data, data_size);
+ }
+ 
++#ifdef GGML_CIOT_T2
++template <> int repack<block_pq2_0, 16, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
++    return repack_pq2_0_to_t2x4(t, data, data_size);
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
+     return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
+@@ -4721,6 +4880,18 @@ template <> void gemv<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+     ggml_gemv_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++#ifdef GGML_CIOT_T2
++template <> void gemv<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    GGML_UNUSED(bs);
++    GGML_UNUSED(nr);
++    const int nb = n / QK_PQ2_0;
++    const block_pq2_0_t2x4 * x = (const block_pq2_0_t2x4 *) vx;
++    for (int c = 0; c < nc; c += 4) {
++        ggml_ciot_gemv_t2x4_q8_K(n, s + c, x + (size_t) (c / 4) * nb, (const block_q8_K *) vy);
++    }
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -4830,6 +5001,12 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+     ggml_gemm_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++#ifdef GGML_CIOT_T2
++template <> void gemm<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    ggml_ciot_gemm_t2x4_q8_K(n, s, bs, vx, vy, nr, nc);
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -5262,6 +5439,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+ 
+     // instance for Q2_0
+     static const ggml::cpu::repack::tensor_traits<block_pq2_0, 8, 4, GGML_TYPE_Q8_0> pq2_0_4x8_q8_0;
++#ifdef GGML_CIOT_T2
++    static const ggml::cpu::repack::tensor_traits<block_pq2_0, 16, 4, GGML_TYPE_Q8_K> pq2_0_t2x4_q8_K;
++#endif
+ 
+     // instances for RISC-V
+     //
+@@ -5451,6 +5631,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+                 return &pq2_0_4x8_q8_0;
+             }
+         }
++#ifdef GGML_CIOT_T2
++        if (ggml_ciot_t2_enabled() && ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
++            if (cur->ne[1] % 4 == 0 && cur->ne[0] % QK_K == 0) {
++                return &pq2_0_t2x4_q8_K;
++            }
++        }
++#endif
+     }
+ 
+     return nullptr;
