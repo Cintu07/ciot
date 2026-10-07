@@ -57,6 +57,34 @@ Validated on Qwen3-0.6B requantized to PQ2_0:
 - pp128: 400 -> 578 tok/s.
 - tg128: 145-160 -> 171-176 tok/s. A model this small is overhead dominated, so the 27B is the real test.
 
+## Prompt processing with i8mm (kernels/t2_i8mm.c, bench/t2_gemm.txt)
+
+- SMMLA tile: 4 T2 rows x 4 tokens. Each weight is decoded once per 4 tokens.
+- Q8_Kx4's 8-byte interleave is already SMMLA's operand layout.
+- Bit-identical to the T2 decode kernel, including with scaled inputs.
+- 5120x17408 x 64 tokens, 8 threads: 400 -> 771 GMAC/s (~16 -> ~30 prompt tok/s on the 27B).
+- In the runtime on Qwen3-0.6B PQ2_0: pp512 331 -> 837 tok/s, perplexity unchanged to every digit.
+
+## Bonsai 2 27B end to end, PTQ1_0 file (llama-bench tg32, 8 threads, interleaved A/B)
+
+- The model runs on this CPU and answers correctly ("The capital of France is Paris.").
+- Stock decode is 2.2–2.7 tok/s at default priority.
+- CIOT's PTQ1_0 NEON kernel in arch/arm/quants.c (`CIOT_PTQ1=0` turns it off):
+  - Perplexity on 3x128 tokens: 10.0305 vs stock 10.0231 (0.07%, statistical error ±1.96).
+  - Prompt pass: 96 s -> 72 s.
+- Per-op profiler (`CIOT_PROF=1`, ggml-cpu.c) at default priority:
+  - Ternary matmul is only 65% of a token.
+  - ~2,400 small ops cost 75–160 µs each (~250 ms per token).
+  - Cause: Windows preempting one of 8 spinning workers, so the other 7 wait at the barrier.
+- `--prio 2` removes most of that: small ops drop to ~28 ms per token and matmul becomes 89%.
+
+| config (prio 2) | tg32 tok/s |
+|---|---|
+| stock PTQ1_0 (generic C) | 3.8–4.2 |
+| CIOT PTQ1_0 NEON | 5.9–6.0 |
+
+At this point PTQ1_0 matmul runs at ~112 Gweights/s, limited by base-3 decode. That is the case for T2.
+
 ## Next
 
 1. Bonsai 2 27B end to end: llama-bench for PTQ1_0 stock, PQ2_0 stock and PQ2_0 + T2, plus a perplexity A/B.
