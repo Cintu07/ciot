@@ -11,6 +11,7 @@
 // CPU the base-3 decode of PTQ1_0 is compute bound well below memory bandwidth.
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define CIOT_QK_T2 128
@@ -32,8 +33,24 @@ typedef struct {
 _Static_assert(sizeof(ciot_block_t2x4) == 136, "t2x4 block must be 136 bytes");
 _Static_assert(sizeof(ciot_block_q8_K) == 292, "q8_K block must be 292 bytes");
 
+// Same as ggml's block_q8_Kx4: 4 activation rows, quants interleaved in 8-byte chunks
+// (qs[32c + 8r + k] is row r, element 8c + k). bsums are not used by CIOT kernels.
+typedef struct {
+    float d[4];
+    int8_t qs[CIOT_QK_K * 4];
+    int16_t bsums[CIOT_QK_K / 4];
+} ciot_block_q8_Kx4;
+
+_Static_assert(sizeof(ciot_block_q8_Kx4) == 1168, "q8_Kx4 block must be 1168 bytes");
+
 // Packs 4 rows of 128 ternary weights (values -1, 0, +1) and their scales into one block.
 void ciot_t2x4_pack(const int8_t* w[4], const float scale[4], ciot_block_t2x4* out);
 
 // s[0..3] = dot(row r, y) for the 4 interleaved rows. n is the row length (multiple of 256).
 void ciot_gemv_t2x4_q8_K_neon(int n, float* s, const ciot_block_t2x4* x, const ciot_block_q8_K* y);
+
+// s[(activation row) * bs + weight row] for nr activation rows (multiple of 4, as Q8_Kx4 groups)
+// and nc weight rows (multiple of 4, as T2x4 groups). ysum_scratch holds n / 32 int32s.
+// Requires i8mm (kernels/t2_i8mm.c).
+void ciot_gemm_t2x4_q8_Kx4_i8mm(int n, float* s, size_t bs, const ciot_block_t2x4* x, const ciot_block_q8_Kx4* y,
+                                int nr, int nc, int32_t* ysum_scratch);

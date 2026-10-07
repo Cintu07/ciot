@@ -1,8 +1,8 @@
 diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
-index 4471c9a..339478c 100644
+index 4471c9a..9050fe1 100644
 --- a/ggml/src/ggml-cpu/repack.cpp
 +++ b/ggml/src/ggml-cpu/repack.cpp
-@@ -447,6 +447,159 @@ template <> inline void ggml_repack_quantize_mat<block_q1_0, 8, GGML_TYPE_Q8_0>(
+@@ -447,6 +447,269 @@ template <> inline void ggml_repack_quantize_mat<block_q1_0, 8, GGML_TYPE_Q8_0>(
      ggml_quantize_mat_q8_0_4x8_g128(x, vy, n_per_row);
  }
  
@@ -117,6 +117,115 @@ index 4471c9a..339478c 100644
 +    return 0;
 +}
 +
++#if defined(__ARM_FEATURE_MATMUL_INT8)
++static inline int8x16_t ggml_ciot_t2_slot(uint8x16_t v, int slot) {
++    switch (slot) {
++        case 0:  return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(3)));
++        case 1:  return vreinterpretq_s8_u8(vandq_u8(vshrq_n_u8(v, 2), vdupq_n_u8(3)));
++        case 2:  return vreinterpretq_s8_u8(vandq_u8(vshrq_n_u8(v, 4), vdupq_n_u8(3)));
++        default: return vreinterpretq_s8_u8(vshrq_n_u8(v, 6));
++    }
++}
++
++// Prompt batches with SMMLA. Q8_Kx4 already interleaves the 4 activation rows in 8-byte chunks,
++// which is SMMLA's operand layout; the weight side zips the 64-bit halves of two decoded rows.
++// Each weight is decoded once per 4 tokens instead of once per token.
++static void ggml_ciot_gemm_t2x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    const int nb  = n / QK_PQ2_0;
++    const int nbk = n / QK_K;
++    const block_pq2_0_t2x4 * x = (const block_pq2_0_t2x4 *) vx;
++    const block_q8_Kx4 *     y = (const block_q8_Kx4 *) vy;
++    const int8x16_t ones = vdupq_n_s8(1);
++
++    thread_local std::vector<int32_t> ysum;
++    ysum.resize((size_t) 4 * nb);
++
++    auto zip_lo = [](int8x16_t a, int8x16_t b) { return vreinterpretq_s8_u64(vzip1q_u64(vreinterpretq_u64_s8(a), vreinterpretq_u64_s8(b))); };
++    auto zip_hi = [](int8x16_t a, int8x16_t b) { return vreinterpretq_s8_u64(vzip2q_u64(vreinterpretq_u64_s8(a), vreinterpretq_u64_s8(b))); };
++
++    for (int yg = 0; yg < nr / 4; ++yg) {
++        const block_q8_Kx4 * yb = y + (size_t) yg * nbk;
++
++        // Per-block column sums, shared by every weight row (w . y = u . y - sum(y)).
++        for (int i = 0; i < nb; ++i) {
++            const int8_t * q = yb[i >> 1].qs + 512 * (i & 1);
++            int32x4_t s01 = vdupq_n_s32(0), s23 = vdupq_n_s32(0);
++            for (int c = 0; c < 16; ++c) {
++                s01 = vdotq_s32(s01, vld1q_s8(q + 32 * c), ones);
++                s23 = vdotq_s32(s23, vld1q_s8(q + 32 * c + 16), ones);
++            }
++            vst1q_s32(ysum.data() + 4 * i, vpaddq_s32(s01, s23));
++        }
++
++        for (int xg = 0; xg < nc / 4; ++xg) {
++            const block_pq2_0_t2x4 * xb = x + (size_t) xg * nb;
++            float32x4_t acc[2][2];
++            for (int p = 0; p < 2; ++p) {
++                for (int q = 0; q < 2; ++q) {
++                    acc[p][q] = vdupq_n_f32(0.0f);
++                }
++            }
++
++            for (int i = 0; i < nb; ++i) {
++                const block_q8_Kx4 * yk = yb + (i >> 1);
++                const int8_t * q8 = yk->qs + 512 * (i & 1);
++
++                // m[p][q] lanes: (row 2p, col 2q), (2p, 2q+1), (2p+1, 2q), (2p+1, 2q+1)
++                int32x4_t m[2][2];
++                for (int p = 0; p < 2; ++p) {
++                    for (int q = 0; q < 2; ++q) {
++                        m[p][q] = vdupq_n_s32(0);
++                    }
++                }
++
++                for (int g = 0; g < 2; ++g) {
++                    uint8x16_t v[4];
++                    for (int r = 0; r < 4; ++r) {
++                        v[r] = vld1q_u8(xb[i].qs[g][r]);
++                    }
++                    for (int sl = 0; sl < 4; ++sl) {
++                        const int8x16_t d0 = ggml_ciot_t2_slot(v[0], sl), d1 = ggml_ciot_t2_slot(v[1], sl);
++                        const int8x16_t d2 = ggml_ciot_t2_slot(v[2], sl), d3 = ggml_ciot_t2_slot(v[3], sl);
++                        const int8_t * qc = q8 + 32 * (8 * g + 2 * sl); // 8-byte chunks kc and kc + 1
++                        const int8x16_t b01 = vld1q_s8(qc),      b23 = vld1q_s8(qc + 16);
++                        const int8x16_t b01h = vld1q_s8(qc + 32), b23h = vld1q_s8(qc + 48);
++                        const int8x16_t a01 = zip_lo(d0, d1), a01h = zip_hi(d0, d1);
++                        const int8x16_t a23 = zip_lo(d2, d3), a23h = zip_hi(d2, d3);
++                        m[0][0] = vmmlaq_s32(vmmlaq_s32(m[0][0], a01, b01), a01h, b01h);
++                        m[0][1] = vmmlaq_s32(vmmlaq_s32(m[0][1], a01, b23), a01h, b23h);
++                        m[1][0] = vmmlaq_s32(vmmlaq_s32(m[1][0], a23, b01), a23h, b01h);
++                        m[1][1] = vmmlaq_s32(vmmlaq_s32(m[1][1], a23, b23), a23h, b23h);
++                    }
++                }
++
++                const float32x4_t dw = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16((const uint16_t *) xb[i].d)));
++                const float32x4_t dy = vld1q_f32(yk->d);
++                const int32x4_t   ys = vld1q_s32(ysum.data() + 4 * i);
++                const float32x4_t rows[2] = { vzip1q_f32(dw, dw), vzip2q_f32(dw, dw) };
++                const float32x4_t cols[2] = { vcombine_f32(vget_low_f32(dy), vget_low_f32(dy)),
++                                              vcombine_f32(vget_high_f32(dy), vget_high_f32(dy)) };
++                const int32x4_t   ysq[2]  = { vcombine_s32(vget_low_s32(ys), vget_low_s32(ys)),
++                                              vcombine_s32(vget_high_s32(ys), vget_high_s32(ys)) };
++                for (int p = 0; p < 2; ++p) {
++                    for (int q = 0; q < 2; ++q) {
++                        acc[p][q] = vfmaq_f32(acc[p][q], vcvtq_f32_s32(vsubq_s32(m[p][q], ysq[q])), vmulq_f32(rows[p], cols[q]));
++                    }
++                }
++            }
++
++            for (int p = 0; p < 2; ++p) {
++                for (int q = 0; q < 2; ++q) {
++                    float out[4];
++                    vst1q_f32(out, acc[p][q]);
++                    for (int l = 0; l < 4; ++l) {
++                        s[(size_t) (4 * yg + 2 * q + (l & 1)) * bs + 4 * xg + 2 * p + (l >> 1)] = out[l];
++                    }
++                }
++            }
++        }
++    }
++}
++#else
 +// Prompt batches arrive as block_q8_Kx4 (8-byte interleave). Split each group of four
 +// activation rows back into plain block_q8_K rows and reuse the decode kernel.
 +static void ggml_ciot_gemm_t2x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
@@ -153,6 +262,7 @@ index 4471c9a..339478c 100644
 +        }
 +    }
 +}
++#endif // __ARM_FEATURE_MATMUL_INT8
 +
 +template <> inline void ggml_repack_quantize_mat<block_pq2_0, 16, GGML_TYPE_Q8_K>(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t nrow, int64_t n_per_row) {
 +    ggml_quantize_mat_t<8, GGML_TYPE_Q8_K>(x, vy, nrow, n_per_row);
@@ -162,7 +272,7 @@ index 4471c9a..339478c 100644
  template <int M, int N>
  static void ggml_gemv_q6_K_NxM_q8_K_generic_impl(int                        n,
                                                   float * GGML_RESTRICT      s,
-@@ -4612,6 +4765,12 @@ template <> int repack<block_pq2_0, 8, 4>(struct ggml_tensor * t, const void * d
+@@ -4612,6 +4875,12 @@ template <> int repack<block_pq2_0, 8, 4>(struct ggml_tensor * t, const void * d
      return repack_pq2_0_to_pq2_0_4_bl(t, 8, data, data_size);
  }
  
@@ -175,7 +285,7 @@ index 4471c9a..339478c 100644
  #if defined __riscv_zvfh
  template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
      return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
-@@ -4721,6 +4880,18 @@ template <> void gemv<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+@@ -4721,6 +4990,18 @@ template <> void gemv<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
      ggml_gemv_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
  }
  
@@ -194,7 +304,7 @@ index 4471c9a..339478c 100644
  #if defined __riscv_zvfh
  template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
      ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
-@@ -4830,6 +5001,12 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+@@ -4830,6 +5111,12 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
      ggml_gemm_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
  }
  
@@ -207,7 +317,7 @@ index 4471c9a..339478c 100644
  #if defined __riscv_zvfh
  template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
      ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
-@@ -5262,6 +5439,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5262,6 +5549,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
  
      // instance for Q2_0
      static const ggml::cpu::repack::tensor_traits<block_pq2_0, 8, 4, GGML_TYPE_Q8_0> pq2_0_4x8_q8_0;
@@ -217,7 +327,7 @@ index 4471c9a..339478c 100644
  
      // instances for RISC-V
      //
-@@ -5451,6 +5631,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+@@ -5451,6 +5741,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
                  return &pq2_0_4x8_q8_0;
              }
          }
