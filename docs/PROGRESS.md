@@ -90,3 +90,18 @@ At this point PTQ1_0 matmul runs at ~112 Gweights/s, limited by base-3 decode. T
 1. Bonsai 2 27B end to end: llama-bench for PTQ1_0 stock, PQ2_0 stock and PQ2_0 + T2, plus a perplexity A/B.
 2. A proper i8mm prompt-processing gemm instead of de-interleave + gemv.
 3. Speculative decoding with recurrent-state rollback (upstream has a `llama-rs-rollback` example; check it before claiming anything new).
+
+## Bonsai 2 27B end to end, all paths (bench/e2e_bonsai_20261007_202636.txt)
+
+- Setup: 8 threads, `--prio 2`, 2 interleaved rounds, llama-bench pp64 / tg32.
+- Results, averaged over the two rounds:
+
+| config | prompt tok/s | decode tok/s |
+|---|---|---|
+| stock PTQ1_0 (generic C, default ARM path) | 4.6 | 4.35 |
+| ciot PTQ1_0 NEON | 7.2 | 4.0 / 6.2 (inconclusive) |
+| stock PQ2_0 (PrismML NEON) | 8.4 | 6.5 |
+| ciot PQ2_0 + T2 (sdot decode, i8mm prompt) | 27.2 | 9.4 |
+
+- T2 perplexity on the 27B, 3x128 tokens: 9.2430 / 7.3521 / 10.0138 per chunk with T2 on and off, bit-identical.
+- Perplexity pass time: 51.4 s -> 17.4 s.
