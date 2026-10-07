@@ -9,7 +9,7 @@ avg() { # label column(pp|tg)
     } END { printf "%6.1f", s / n }'
 }
 
-ppl() { grep '^\[1\]' "$1" | tail -1 | sed 's/\[[0-9]\]//g; s/,$//; s/,/  /g'; }
+ppl() { grep '^\[1\]' "$1" | tail -1 | tr -d '\r' | sed 's/\[[0-9]\]//g; s/,$//; s/,/  /g'; }
 
 echo "-- ciot v2 -------------------------------------------------------------"
 echo "  model      ternary bonsai 2 27b (qwen3.8 hybrid, 64 blocks)"
