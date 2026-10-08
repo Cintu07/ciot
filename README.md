@@ -62,5 +62,3 @@ The repack turns on by itself on AArch64 CPUs with dotprod (i8mm for prefill). O
 - **Hardware:** only tested on one machine, a Snapdragon X X126100.
 - **Equal-memory accuracy comparison:** in progress. Partial laptop run of Bonsai 2 27B: GSM8K 58/60, HumanEval 19/19 on the first 19 problems.
 - **Remaining speed gap:** end-to-end decode is ~9.7 tok/s against a ~15 tok/s kernel bound. The rest is runtime overhead.
-
-Built with help from Claude Code.
