@@ -4,7 +4,7 @@ a 27 billion parameter ternary model running on a laptop cpu. no gpu. built by [
 
 ### what it does
 
-ciot v1 was a tiny engine i wrote from scratch to see how fast ternary weights could go on a cpu. v2 points the same idea at a real model: ternary bonsai 2 27b from prismml, which is qwen3.8 27b trained down to weights of -1, 0 and +1. it is 7.2 gb on disk, so it fits in the 16 gb of ram on my snapdragon x laptop.
+[ciot v1](v1/) was a tiny engine i wrote from scratch to see how fast ternary weights could go on a cpu. v2 points the same idea at a real model: ternary bonsai 2 27b from prismml, which is qwen3.8 27b trained down to weights of -1, 0 and +1. it is 7.2 gb on disk, so it fits in the 16 gb of ram on my snapdragon x laptop.
 
 prismml ships a llama.cpp fork that runs it, but that fork is built for cuda and metal. on an arm laptop cpu the 1.75 bit file falls back to a plain c loop, and the 2 bit file gets a basic neon kernel. so i wrote new kernels for the matmuls, plugged them into their runtime, and checked that the output stays bit identical.
 
@@ -59,6 +59,7 @@ patches/      the change to prismml's runtime, plus the full research patch
 bench/        every benchmark, its raw output, and the eval harness
 kaggle/       the same eval as a notebook for a free kaggle gpu
 docs/         PROGRESS.md, the full log of what was measured and what failed
+v1/           the original ciot engine, untouched
 ```
 
 ### status
