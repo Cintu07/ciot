@@ -1,0 +1,11 @@
+date: 2026-10-07T20:26:36+05:30
+fork: 6bfcd79 + patches/prism-llama.cpp-t2-neon.patch
+cpu: Snapdragon X X126100, 8 cores | threads=8 prio=2 rounds=2
+round 1  stock PTQ1_0    pp64           5.25 ± 0.15   tg32           4.33 ± 0.07   
+round 1  ciot PTQ1_0     pp64           7.70 ± 0.24   tg32           4.03 ± 0.00   
+round 1  stock PQ2_0     pp64           8.78 ± 0.86   tg32           7.08 ± 0.05   
+round 1  ciot PQ2_0+T2   pp64          29.86 ± 0.83   tg32           9.17 ± 0.32   
+round 2  stock PTQ1_0    pp64           3.85 ± 0.01   tg32           4.36 ± 0.03   
+round 2  ciot PTQ1_0     pp64           6.76 ± 0.79   tg32           6.24 ± 0.05   
+round 2  stock PQ2_0     pp64           8.04 ± 1.93   tg32           5.98 ± 0.02   
+round 2  ciot PQ2_0+T2   pp64          24.60 ± 6.94   tg32           9.54 ± 0.19   

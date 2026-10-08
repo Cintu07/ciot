@@ -1,0 +1,946 @@
+diff --git a/examples/CMakeLists.txt b/examples/CMakeLists.txt
+index f24052c..098a847 100644
+--- a/examples/CMakeLists.txt
++++ b/examples/CMakeLists.txt
+@@ -28,6 +28,7 @@ else()
+     add_subdirectory(passkey)
+     add_subdirectory(retrieval)
+     add_subdirectory(rs-rollback)
++    add_subdirectory(ciot-spec)
+     add_subdirectory(simple)
+     add_subdirectory(simple-chat)
+     add_subdirectory(speculative)
+diff --git a/examples/ciot-spec/CMakeLists.txt b/examples/ciot-spec/CMakeLists.txt
+new file mode 100644
+index 0000000..18579a7
+--- /dev/null
++++ b/examples/ciot-spec/CMakeLists.txt
+@@ -0,0 +1,5 @@
++set(TARGET llama-ciot-spec)
++add_executable(${TARGET} ciot-spec.cpp)
++install(TARGETS ${TARGET} RUNTIME)
++target_link_libraries(${TARGET} PRIVATE llama ${CMAKE_THREAD_LIBS_INIT})
++target_compile_features(${TARGET} PRIVATE cxx_std_17)
+diff --git a/examples/ciot-spec/ciot-spec.cpp b/examples/ciot-spec/ciot-spec.cpp
+new file mode 100644
+index 0000000..eb70e95
+--- /dev/null
++++ b/examples/ciot-spec/ciot-spec.cpp
+@@ -0,0 +1,315 @@
++// Greedy prompt-lookup speculative decoding for hybrid (recurrent + attention) models on CPU.
++//
++// Each step proposes up to k draft tokens by finding the most recent earlier occurrence of the
++// last g tokens in the context, verifies [next, draft...] in one llama_decode, keeps the matching
++// prefix, and rolls the recurrent state back with llama_memory_seq_rm, which restores a snapshot
++// from the n_rs_seq ring. Greedy speculation must reproduce plain greedy decoding, so the program
++// runs both and compares the token streams.
++//
++// usage: llama-ciot-spec -m model.gguf -f prompt.txt [-n 256] [-k 3] [-g 3] [-t 8]
++#include "llama.h"
++
++#include <chrono>
++#include <cstdio>
++#include <cstdlib>
++#include <cstring>
++#include <fstream>
++#include <sstream>
++#include <string>
++#include <vector>
++
++#if defined(_WIN32)
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#endif
++
++static llama_token argmax(const float * logits, int n_vocab, float * margin = nullptr) {
++    llama_token best = 0;
++    for (int i = 1; i < n_vocab; i++) {
++        if (logits[i] > logits[best]) {
++            best = i;
++        }
++    }
++    if (margin) {
++        float second = -1e30f;
++        for (int i = 0; i < n_vocab; i++) {
++            if (i != best && logits[i] > second) {
++                second = logits[i];
++            }
++        }
++        *margin = logits[best] - second;
++    }
++    return best;
++}
++
++// Tokens that followed the most recent earlier occurrence of the context's last g tokens.
++// Falls back to shorter n-grams down to 2.
++static void lookup_draft(const std::vector<llama_token> & toks, int g_max, int k, std::vector<llama_token> & draft) {
++    draft.clear();
++    const int L = (int) toks.size();
++    for (int g = g_max; g >= 2 && draft.empty(); --g) {
++        if (L < g + 1) {
++            continue;
++        }
++        for (int i = L - g - 1; i >= 0; --i) {
++            if (std::memcmp(&toks[i], &toks[L - g], g * sizeof(llama_token)) == 0) {
++                for (int j = i + g; j < L && (int) draft.size() < k; ++j) {
++                    draft.push_back(toks[j]);
++                }
++                break;
++            }
++        }
++    }
++}
++
++struct run_stats {
++    std::vector<llama_token> out;
++    std::vector<float>       margin; // top1 - top2 logit gap behind each output token
++    std::vector<int>         n_batch_of; // size of the decode batch that produced each token's logits
++    double decode_s    = 0;
++    int    n_steps     = 0;
++    int    n_drafted   = 0;
++    int    n_accepted  = 0;
++};
++
++// Draft sources. ORACLE drafts the reference greedy continuation, so any rejection is batched
++// verification computing a different argmax than one-token decode (numerics, not rollback).
++// JUNK drafts tokens guaranteed to differ from the reference, so every step rolls back; the
++// output must still equal the reference if rollback restores the right state.
++enum draft_mode { DRAFT_LOOKUP, DRAFT_ORACLE, DRAFT_JUNK };
++
++static bool adaptive = true; // --no-adaptive drafts on every step
++
++static bool run(llama_model * model, const std::vector<llama_token> & prompt, int n_predict, int k, int g, int n_threads, run_stats & st,
++                draft_mode mode = DRAFT_LOOKUP, const std::vector<llama_token> * ref = nullptr) {
++    const llama_vocab * vocab   = llama_model_get_vocab(model);
++    const int           n_vocab = llama_vocab_n_tokens(vocab);
++
++    llama_context_params cparams = llama_context_default_params();
++    cparams.n_ctx           = (uint32_t) (prompt.size() + n_predict + k + 16);
++    cparams.n_batch         = 512;
++    cparams.n_ubatch        = 512;
++    cparams.n_threads       = n_threads;
++    cparams.n_threads_batch = n_threads;
++    cparams.n_rs_seq        = k > 0 ? (uint32_t) (k + 1) : 0; // plain greedy keeps the stock (ring-free) path
++    llama_context * ctx = llama_init_from_model(model, cparams);
++    if (!ctx) {
++        fprintf(stderr, "failed to create context\n");
++        return false;
++    }
++    llama_memory_t mem = llama_get_memory(ctx);
++
++    llama_batch pb = llama_batch_get_one(const_cast<llama_token *>(prompt.data()), (int32_t) prompt.size());
++    if (llama_decode(ctx, pb)) {
++        fprintf(stderr, "prompt decode failed\n");
++        return false;
++    }
++
++    std::vector<llama_token> toks = prompt;
++    std::vector<llama_token> draft;
++    llama_batch batch = llama_batch_init(k + 1, 0, 1);
++    int         n_past = (int) prompt.size();
++    float       next_margin = 0;
++    int         next_batch  = (int) prompt.size();
++    llama_token next   = argmax(llama_get_logits_ith(ctx, -1), n_vocab, &next_margin);
++
++    // Adaptive drafting: a verify batch costs more than a single-token step, so when recent
++    // drafts keep getting rejected (free-form prose), stop drafting for a while, then probe again.
++    float accept_ema = 1.0f;
++    int   cooldown   = 0;
++    int   backoff    = 8; // doubles every time drafting fails again, resets when a probe pays off
++
++    const auto t0 = std::chrono::steady_clock::now();
++    while ((int) st.out.size() < n_predict) {
++        if (llama_vocab_is_eog(vocab, next)) {
++            break;
++        }
++        st.out.push_back(next);
++        st.margin.push_back(next_margin);
++        st.n_batch_of.push_back(next_batch);
++        toks.push_back(next);
++        if ((int) st.out.size() >= n_predict) {
++            break;
++        }
++
++        const int k_now = std::min(k, n_predict - (int) st.out.size());
++        draft.clear();
++        if (k > 0 && mode == DRAFT_LOOKUP) {
++            if (adaptive && cooldown > 0) {
++                cooldown--;
++            } else {
++                lookup_draft(toks, g, k_now, draft);
++            }
++        } else if (k > 0 && ref) {
++            for (int i = 0; i < k_now && st.out.size() + i < ref->size(); ++i) {
++                const llama_token r = (*ref)[st.out.size() + i];
++                draft.push_back(mode == DRAFT_ORACLE ? r : (r + 1) % n_vocab);
++            }
++        }
++
++        batch.n_tokens = 1 + (int32_t) draft.size();
++        for (int i = 0; i < batch.n_tokens; ++i) {
++            batch.token[i]     = i == 0 ? next : draft[i - 1];
++            batch.pos[i]       = n_past + i;
++            batch.n_seq_id[i]  = 1;
++            batch.seq_id[i][0] = 0;
++            batch.logits[i]    = true;
++        }
++        if (llama_decode(ctx, batch)) {
++            fprintf(stderr, "decode failed at pos %d\n", n_past);
++            return false;
++        }
++        st.n_steps++;
++        st.n_drafted += (int) draft.size();
++
++        int         a    = 0;
++        float       m    = 0;
++        llama_token pred = argmax(llama_get_logits_ith(ctx, 0), n_vocab, &m);
++        while (a < (int) draft.size() && pred == draft[a] && !llama_vocab_is_eog(vocab, pred) && (int) st.out.size() < n_predict) {
++            st.out.push_back(draft[a]);
++            st.margin.push_back(m);
++            st.n_batch_of.push_back(batch.n_tokens);
++            toks.push_back(draft[a]);
++            ++a;
++            pred = argmax(llama_get_logits_ith(ctx, a), n_vocab, &m);
++        }
++        next_margin = m;
++        next_batch  = batch.n_tokens;
++        st.n_accepted += a;
++        if (!draft.empty()) {
++            const float rate = (float) a / (float) draft.size();
++            accept_ema = 0.7f * accept_ema + 0.3f * rate;
++            if (accept_ema < 0.3f) {
++                cooldown   = backoff;                 // skip drafting for a while
++                backoff    = std::min(backoff * 2, 64);
++                accept_ema = 0.5f;                    // then probe from a neutral estimate
++            } else if (rate >= 0.5f) {
++                backoff = 8;
++            }
++        }
++        n_past += 1 + a;
++
++        if (a < (int) draft.size() && !llama_memory_seq_rm(mem, 0, n_past, -1)) {
++            fprintf(stderr, "rollback refused at pos %d (n_rs_seq=%u)\n", n_past, llama_n_rs_seq(ctx));
++            return false;
++        }
++        next = pred;
++    }
++    st.decode_s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
++
++    llama_batch_free(batch);
++    llama_free(ctx);
++    return true;
++}
++
++int main(int argc, char ** argv) {
++    std::string model_path, prompt_path, prompt = "def fib(n):";
++    int n_predict = 256, k = 3, g = 3, n_threads = 8;
++    bool check = false; // also run oracle and junk drafts
++    for (int i = 1; i < argc; i++) {
++        if (!strcmp(argv[i], "-m") && i + 1 < argc)      model_path  = argv[++i];
++        else if (!strcmp(argv[i], "-f") && i + 1 < argc) prompt_path = argv[++i];
++        else if (!strcmp(argv[i], "-p") && i + 1 < argc) prompt      = argv[++i];
++        else if (!strcmp(argv[i], "-n") && i + 1 < argc) n_predict   = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "-k") && i + 1 < argc) k           = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "-g") && i + 1 < argc) g           = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "-t") && i + 1 < argc) n_threads   = atoi(argv[++i]);
++        else if (!strcmp(argv[i], "--check"))            check       = true;
++        else if (!strcmp(argv[i], "--no-adaptive"))      adaptive    = false;
++    }
++    if (model_path.empty()) {
++        fprintf(stderr, "usage: %s -m model.gguf [-f prompt.txt | -p text] [-n 256] [-k 3] [-g 3] [-t 8]\n", argv[0]);
++        return 1;
++    }
++    if (!prompt_path.empty()) {
++        std::ifstream f(prompt_path, std::ios::binary);
++        std::stringstream ss;
++        ss << f.rdbuf();
++        prompt = ss.str();
++    }
++
++    setvbuf(stdout, nullptr, _IONBF, 0); // results survive even if teardown crashes
++
++#if defined(_WIN32)
++    // Same effect as llama-bench --prio 2: keeps Windows from preempting spinning workers.
++    SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS);
++#endif
++
++    llama_backend_init();
++    llama_model_params mparams = llama_model_default_params();
++    mparams.load_mode          = LLAMA_LOAD_MODE_NONE; // read into RAM; mmap pages get evicted next to the repacked copy
++    llama_model * model        = llama_model_load_from_file(model_path.c_str(), mparams);
++    if (!model) {
++        fprintf(stderr, "failed to load model\n");
++        return 1;
++    }
++    const llama_vocab * vocab = llama_model_get_vocab(model);
++
++    const int n_prompt = -llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), NULL, 0, true, true);
++    std::vector<llama_token> ptoks(n_prompt);
++    llama_tokenize(vocab, prompt.c_str(), (int32_t) prompt.size(), ptoks.data(), n_prompt, true, true);
++    if (n_prompt > 500) {
++        fprintf(stderr, "prompt is %d tokens, keep it under 500 so it fits one micro-batch\n", n_prompt);
++        return 1;
++    }
++
++    run_stats base, spec;
++    if (!run(model, ptoks, n_predict, 0, g, n_threads, base)) {
++        return 1;
++    }
++    if (check) {
++        for (draft_mode m : {DRAFT_ORACLE, DRAFT_JUNK}) {
++            run_stats st;
++            if (!run(model, ptoks, n_predict, k, g, n_threads, st, m, &base.out)) {
++                return 1;
++            }
++            int first = -1;
++            for (size_t i = 0; i < base.out.size() && i < st.out.size(); ++i) {
++                if (base.out[i] != st.out[i]) { first = (int) i; break; }
++            }
++            printf("check %-6s : %d/%d drafts accepted, first mismatch vs greedy: %s\n", m == DRAFT_ORACLE ? "oracle" : "junk",
++                   st.n_accepted, st.n_drafted, first < 0 ? "none" : std::to_string(first).c_str());
++        }
++    }
++    if (!run(model, ptoks, n_predict, k, g, n_threads, spec)) {
++        return 1;
++    }
++
++    size_t mismatch = 0;
++    int    first    = -1;
++    for (size_t i = 0; i < base.out.size() && i < spec.out.size(); ++i) {
++        if (base.out[i] != spec.out[i]) {
++            mismatch++;
++            if (first < 0) first = (int) i;
++        }
++    }
++
++    std::string text;
++    for (llama_token t : spec.out) {
++        char buf[256];
++        const int n = llama_token_to_piece(vocab, t, buf, sizeof(buf), 0, true);
++        if (n > 0) text.append(buf, n);
++    }
++
++    printf("\n--- output (speculative) ---\n%s\n---\n", text.c_str());
++    printf("prompt tokens     : %d\n", n_prompt);
++    printf("greedy            : %zu tokens in %.2f s = %.2f tok/s\n", base.out.size(), base.decode_s, base.out.size() / base.decode_s);
++    printf("speculative (k=%d) : %zu tokens in %.2f s = %.2f tok/s, %d verify steps, %d/%d drafts accepted (%.0f%%)\n",
++           k, spec.out.size(), spec.decode_s, spec.out.size() / spec.decode_s, spec.n_steps, spec.n_accepted, spec.n_drafted,
++           spec.n_drafted ? 100.0 * spec.n_accepted / spec.n_drafted : 0.0);
++    printf("speedup           : %.2fx\n", base.decode_s / spec.decode_s);
++    printf("token mismatches  : %zu%s\n", mismatch, first >= 0 ? (" (first at " + std::to_string(first) + ")").c_str() : "");
++    if (first >= 0) {
++        printf("at first mismatch : greedy picked %d (margin %.4f, %d-token batch), speculative picked %d (margin %.4f, %d-token batch)\n",
++               base.out[first], base.margin[first], base.n_batch_of[first], spec.out[first], spec.margin[first], spec.n_batch_of[first]);
++        float min_margin = 1e30f;
++        for (int i = 0; i < first; ++i) {
++            min_margin = std::min(min_margin, base.margin[i]);
++        }
++        printf("smallest greedy margin before it : %.4f\n", min_margin);
++    }
++
++    llama_model_free(model);
++    llama_backend_free();
++    return 0;
++}
+diff --git a/ggml/src/ggml-cpu/arch-fallback.h b/ggml/src/ggml-cpu/arch-fallback.h
+index f22018a..c248cc2 100644
+--- a/ggml/src/ggml-cpu/arch-fallback.h
++++ b/ggml/src/ggml-cpu/arch-fallback.h
+@@ -82,10 +82,12 @@
+ #define ggml_gemm_q1_0_4x8_q8_0_generic ggml_gemm_q1_0_4x8_q8_0
+ #define ggml_gemm_pq2_0_4x8_q8_0_generic ggml_gemm_pq2_0_4x8_q8_0
+ #elif defined(__aarch64__) || defined(__arm__) || defined(_M_ARM) || defined(_M_ARM64)
+-// PTQ1_0's NEON vec_dot is unverified on real ARM hardware and measured slower
+-// than the generic loop on two independent devices (Apple M5 Pro, Snapdragon 7
+-// Gen 4); alias it back to generic until a validated replacement lands
++// PTQ1_0's earlier NEON vec_dot measured slower than the generic loop on two devices
++// (Apple M5 Pro, Snapdragon 7 Gen 4). AArch64 with dotprod now uses the CIOT kernel in
++// arch/arm/quants.c; anything else keeps the generic loop.
++#if !defined(__aarch64__) || !defined(__ARM_FEATURE_DOTPROD)
+ #define ggml_vec_dot_ptq1_0_q8_0_generic ggml_vec_dot_ptq1_0_q8_0
++#endif
+ // repack.cpp
+ #define ggml_quantize_mat_q8_K_4x4_generic ggml_quantize_mat_q8_K_4x4
+ #define ggml_quantize_mat_q8_K_4x8_generic ggml_quantize_mat_q8_K_4x8
+diff --git a/ggml/src/ggml-cpu/arch/arm/quants.c b/ggml/src/ggml-cpu/arch/arm/quants.c
+index bea782f..d106aa0 100644
+--- a/ggml/src/ggml-cpu/arch/arm/quants.c
++++ b/ggml/src/ggml-cpu/arch/arm/quants.c
+@@ -365,6 +365,84 @@ void ggml_vec_dot_pq2_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const vo
+     *s = sumf;
+ }
+ 
++#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
++// PTQ1_0 x Q8_0 (CIOT). Trit nn of a packed byte is floor(3 * (byte * 3^nn mod 256) / 256), and
++// for any byte v that equals (v >= 86) + (v >= 171). NEON compares return 0 or -1, so a weight
++// is -1 - mask(v >= 86) - mask(v >= 171): one multiply, two compares and two subtracts per 16
++// weights on full vectors, then one SDOT. CIOT_PTQ1=0 selects the generic loop for A/B runs.
++static inline int8x16_t ggml_ciot_ptq1_0_trits(uint8x16_t v) {
++    const int8x16_t ge1 = vreinterpretq_s8_u8(vcgeq_u8(v, vdupq_n_u8(86)));
++    const int8x16_t ge2 = vreinterpretq_s8_u8(vcgeq_u8(v, vdupq_n_u8(171)));
++    return vsubq_s8(vsubq_s8(vdupq_n_s8(-1), ge1), ge2);
++}
++
++void ggml_vec_dot_ptq1_0_q8_0(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
++    static int enabled = -1;
++    if (enabled < 0) {
++        const char * v = getenv("CIOT_PTQ1");
++        enabled = !(v && v[0] == '0');
++    }
++    if (!enabled) {
++        ggml_vec_dot_ptq1_0_q8_0_generic(n, s, bs, vx, bx, vy, by, nrc);
++        return;
++    }
++
++    assert(n % QK_PTQ1_0 == 0);
++    assert(nrc == 1);
++    UNUSED(nrc);
++    UNUSED(bx);
++    UNUSED(by);
++    UNUSED(bs);
++
++    const block_ptq1_0 * GGML_RESTRICT x = vx;
++    const block_q8_0   * GGML_RESTRICT y = vy;
++    const int nb = n / QK_PTQ1_0;
++
++    // Bytes 16..23 are processed as a 16-lane vector holding two trit positions at once.
++    static const uint8_t k_pow_1_3[16]  = {1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 3, 3, 3};
++    static const uint8_t k_pow_9_27[16] = {9, 9, 9, 9, 9, 9, 9, 9, 27, 27, 27, 27, 27, 27, 27, 27};
++    static const uint8_t k_pow_qh[8]    = {1, 1, 3, 3, 9, 9, 27, 27};
++    const uint8x16_t pow_1_3  = vld1q_u8(k_pow_1_3);
++    const uint8x16_t pow_9_27 = vld1q_u8(k_pow_9_27);
++    const uint8x8_t  pow_qh   = vld1_u8(k_pow_qh);
++    const int32x4_t  zero     = vdupq_n_s32(0);
++
++    float32x4_t acc = vdupq_n_f32(0.0f);
++
++    for (int i = 0; i < nb; ++i) {
++        const block_q8_0 * GGML_RESTRICT yb = y + 4 * i;
++
++        const uint8x16_t q16  = vld1q_u8(x[i].qs);
++        const uint8x8_t  q8   = vld1_u8(x[i].qs + 16);
++        const uint8x16_t q8x2 = vcombine_u8(q8, q8);
++        uint16_t qh_pair;
++        memcpy(&qh_pair, x[i].qh, sizeof(qh_pair));
++        const uint8x8_t qh = vreinterpret_u8_u16(vdup_n_u16(qh_pair)); // h0 h1 h0 h1 ...
++
++        // values 0..79: bytes 0..15, trit nn is values 16nn..16nn+15
++        int32x4_t a0 = ggml_vdotq_s32(zero, ggml_ciot_ptq1_0_trits(q16), vld1q_s8(yb[0].qs));
++        a0 = ggml_vdotq_s32(a0, ggml_ciot_ptq1_0_trits(vmulq_u8(q16, vdupq_n_u8(3))),  vld1q_s8(yb[0].qs + 16));
++        int32x4_t a1 = ggml_vdotq_s32(zero, ggml_ciot_ptq1_0_trits(vmulq_u8(q16, vdupq_n_u8(9))), vld1q_s8(yb[1].qs));
++        a1 = ggml_vdotq_s32(a1, ggml_ciot_ptq1_0_trits(vmulq_u8(q16, vdupq_n_u8(27))), vld1q_s8(yb[1].qs + 16));
++        int32x4_t a2 = ggml_vdotq_s32(zero, ggml_ciot_ptq1_0_trits(vmulq_u8(q16, vdupq_n_u8(81))), vld1q_s8(yb[2].qs));
++        // values 80..111: bytes 16..23, two trit positions per vector
++        a2 = ggml_vdotq_s32(a2, ggml_ciot_ptq1_0_trits(vmulq_u8(q8x2, pow_1_3)), vld1q_s8(yb[2].qs + 16));
++        int32x4_t a3 = ggml_vdotq_s32(zero, ggml_ciot_ptq1_0_trits(vmulq_u8(q8x2, pow_9_27)), vld1q_s8(yb[3].qs));
++        // values 112..119: last trit of bytes 16..23; values 120..127: qh trits
++        const uint8x16_t tail = vcombine_u8(vmul_u8(q8, vdup_n_u8(81)), vmul_u8(qh, pow_qh));
++        a3 = ggml_vdotq_s32(a3, ggml_ciot_ptq1_0_trits(tail), vld1q_s8(yb[3].qs + 16));
++
++        // lane k = integer dot product against activation block k
++        const int32x4_t sums = vpaddq_s32(vpaddq_s32(a0, a1), vpaddq_s32(a2, a3));
++        const uint16_t dy[4] = { yb[0].d, yb[1].d, yb[2].d, yb[3].d };
++        const float32x4_t scale = vmulq_n_f32(vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16(dy))), GGML_CPU_FP16_TO_FP32(x[i].d));
++        acc = vfmaq_f32(acc, vcvtq_f32_s32(sums), scale);
++    }
++
++    *s = vaddvq_f32(acc);
++}
++#endif // __aarch64__ && __ARM_FEATURE_DOTPROD
++
+ void ggml_vec_dot_pq2_0_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, size_t bx, const void * GGML_RESTRICT vy, size_t by, int nrc) {
+     assert(n % QK_K == 0);
+     assert(nrc == 1);
+diff --git a/ggml/src/ggml-cpu/ggml-cpu.c b/ggml/src/ggml-cpu/ggml-cpu.c
+index dd40c28..850690f 100644
+--- a/ggml/src/ggml-cpu/ggml-cpu.c
++++ b/ggml/src/ggml-cpu/ggml-cpu.c
+@@ -3110,10 +3110,58 @@ static int ggml_cpu_try_fuse_ops(
+     return 0;
+ }
+ 
++// CIOT_PROF=1: wall time per (op, src0 type) measured on thread 0 from the start of a node to the
++// end of the barrier that follows it, i.e. until the slowest thread finishes. Printed at exit.
++static int     ciot_prof_state = -1;
++static double  ciot_prof_ms[GGML_OP_COUNT][GGML_TYPE_COUNT];
++static int64_t ciot_prof_count[GGML_OP_COUNT][GGML_TYPE_COUNT];
++static int64_t ciot_prof_graphs;
++
++static void ciot_prof_dump(void) {
++    double total = 0;
++    for (int o = 0; o < GGML_OP_COUNT; ++o) {
++        for (int t = 0; t < GGML_TYPE_COUNT; ++t) {
++            total += ciot_prof_ms[o][t];
++        }
++    }
++    if (ciot_prof_graphs == 0 || total == 0) {
++        return;
++    }
++    fprintf(stderr, "\nCIOT_PROF: %lld graphs, %.2f ms per graph\n", (long long) ciot_prof_graphs, total / ciot_prof_graphs);
++    for (int printed = 0; printed < 20; ++printed) {
++        int bo = -1, bt = -1;
++        double best = 0;
++        for (int o = 0; o < GGML_OP_COUNT; ++o) {
++            for (int t = 0; t < GGML_TYPE_COUNT; ++t) {
++                if (ciot_prof_ms[o][t] > best) {
++                    best = ciot_prof_ms[o][t];
++                    bo = o;
++                    bt = t;
++                }
++            }
++        }
++        if (bo < 0) {
++            break;
++        }
++        fprintf(stderr, "  %-22s %-8s %9.3f ms/graph %5.1f%%  %6.1f nodes/graph\n", ggml_op_name((enum ggml_op) bo), ggml_type_name((enum ggml_type) bt),
++                best / ciot_prof_graphs, 100.0 * best / total, (double) ciot_prof_count[bo][bt] / ciot_prof_graphs);
++        ciot_prof_ms[bo][bt] = 0;
++    }
++}
++
+ static thread_ret_t ggml_graph_compute_thread(void * data) {
+     struct ggml_compute_state * state = (struct ggml_compute_state *) data;
+     struct ggml_threadpool    * tp    = state->threadpool;
+ 
++    if (ciot_prof_state < 0 && state->ith == 0) {
++        const char * v = getenv("CIOT_PROF");
++        ciot_prof_state = (v && v[0] == '1') ? 1 : 0;
++        if (ciot_prof_state) {
++            atexit(ciot_prof_dump);
++        }
++    }
++    const bool prof = state->ith == 0 && ciot_prof_state == 1;
++
+     const struct ggml_cgraph * cgraph = tp->cgraph;
+     const struct ggml_cplan  * cplan  = tp->cplan;
+ 
+@@ -3150,6 +3198,8 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+             continue;
+         }
+ 
++        const int64_t prof_t0 = prof ? ggml_time_us() : 0;
++
+         // TODO: move fused-op detection into ggml_graph_plan so fusion decisions are made once at planning time
+         // Try fused ops, fall back to normal compute
+         const int n_fused = ggml_cpu_try_fuse_ops(cgraph, node_n, &params, cplan);
+@@ -3168,6 +3218,15 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
+         if (node_n + 1 < cgraph->n_nodes) {
+             ggml_barrier(state->threadpool);
+         }
++
++        if (prof) {
++            const int t = node->src[0] ? (int) node->src[0]->type : 0;
++            ciot_prof_ms[node->op][t] += (ggml_time_us() - prof_t0) / 1000.0;
++            ciot_prof_count[node->op][t] += 1;
++        }
++    }
++    if (prof) {
++        ciot_prof_graphs++;
+     }
+ 
+ #ifdef GGML_USE_OPENMP
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index 4471c9a..f6971fd 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -447,6 +447,267 @@ template <> inline void ggml_repack_quantize_mat<block_q1_0, 8, GGML_TYPE_Q8_0>(
+     ggml_quantize_mat_q8_0_4x8_g128(x, vy, n_per_row);
+ }
+ 
++#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
++// CIOT T2P layout for PQ2_0 on AArch64 (repack tag: INTER_SIZE 16, NB_COLS 4, Q8_K activations).
++//
++// Same bits as PQ2_0 (2-bit codes u = w + 1, one fp16 scale per 128 weights), rearranged so NEON
++// decodes them with one AND or shift per 16 weights instead of a table lookup, shift, mask and
++// subtract, and so the decoded vectors are SMMLA operands as-is:
++//   - 4 rows per 128-weight block, grouped in row pairs (0,1) and (2,3), four 16-byte words per pair;
++//   - byte j of word w of pair p holds, in bits 2s..2s+1, row 2p + (j >= 8), weight 8(4w + s) + (j & 7),
++//     so (word >> 2s) & 3 is [row 2p: 8 weights of chunk 4w + s | row 2p+1: same chunk];
++//   - the +1 offset is removed once per block with the activation sums Q8_K already carries.
++// A block of 4 rows is 136 bytes, exactly 4 * sizeof(block_pq2_0), so the repack is in place.
++#include <arm_neon.h>
++#include <cstdlib>
++#include <vector>
++
++#define GGML_CIOT_T2 1
++
++struct block_pq2_0_t2x4 {
++    ggml_half d[4];
++    uint8_t   qs[2][4][16]; // [pair][word][byte]
++};
++
++// Slots 1 and 2 are masked in place (values scaled by 4 and 16) and accumulate separately;
++// one recombine per block replaces a shift per vector.
++static inline int8x16_t ggml_ciot_slot0(uint8x16_t v) { return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x03))); }
++static inline int8x16_t ggml_ciot_slot1(uint8x16_t v) { return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x0C))); }
++static inline int8x16_t ggml_ciot_slot2(uint8x16_t v) { return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x30))); }
++static inline int8x16_t ggml_ciot_slot3(uint8x16_t v) { return vreinterpretq_s8_u8(vshrq_n_u8(v, 6)); }
++static_assert(sizeof(block_pq2_0_t2x4) == 4 * sizeof(block_pq2_0), "t2x4 must repack PQ2_0 in place");
++
++static bool ggml_ciot_t2_enabled() {
++    static const bool enabled = [] {
++        const char * v = getenv("CIOT_T2");
++        return !(v && v[0] == '0');
++    }();
++    return enabled;
++}
++
++// s[0..3] = dot(row r, y) for the 4 rows in x. n is a multiple of QK_K. SDOT against a chunk's
++// 8 activations duplicated into both halves puts row 2p in lanes 0-1 and row 2p+1 in lanes 2-3.
++static void ggml_ciot_gemv_t2x4_q8_K(int n, float * GGML_RESTRICT s, const block_pq2_0_t2x4 * GGML_RESTRICT x, const block_q8_K * GGML_RESTRICT y) {
++    const int nb = n / QK_PQ2_0;
++
++    float32x4_t acc = vdupq_n_f32(0.0f);
++
++    for (int i = 0; i < nb; ++i) {
++        const block_q8_K * GGML_RESTRICT yb = y + (i >> 1);
++        const int8_t * GGML_RESTRICT q8 = yb->qs + 128 * (i & 1);
++        const int32_t ysum = vaddlvq_s16(vld1q_s16(yb->bsums + 8 * (i & 1)));
++
++        // one accumulator per (pair, slot): 8 independent SDOT chains
++        int32x4_t a[2][4];
++        for (int p = 0; p < 2; ++p) {
++            for (int sl = 0; sl < 4; ++sl) {
++                a[p][sl] = vdupq_n_s32(0);
++            }
++        }
++        for (int wd = 0; wd < 4; ++wd) {
++            int8x16_t yc[4];
++            for (int sl = 0; sl < 4; ++sl) {
++                yc[sl] = vreinterpretq_s8_u64(vld1q_dup_u64((const uint64_t *) (q8 + 8 * (4 * wd + sl))));
++            }
++            for (int p = 0; p < 2; ++p) {
++                const uint8x16_t v = vld1q_u8(x[i].qs[p][wd]);
++                a[p][0] = vdotq_s32(a[p][0], ggml_ciot_slot0(v), yc[0]);
++                a[p][1] = vdotq_s32(a[p][1], ggml_ciot_slot1(v), yc[1]);
++                a[p][2] = vdotq_s32(a[p][2], ggml_ciot_slot2(v), yc[2]);
++                a[p][3] = vdotq_s32(a[p][3], ggml_ciot_slot3(v), yc[3]);
++            }
++        }
++        const int32x4_t t0 = vmlaq_n_s32(vmlaq_n_s32(a[0][2], a[0][1], 4), vaddq_s32(a[0][0], a[0][3]), 16);
++        const int32x4_t t1 = vmlaq_n_s32(vmlaq_n_s32(a[1][2], a[1][1], 4), vaddq_s32(a[1][0], a[1][3]), 16);
++
++        // [row0..row3] = 16 * (u . y); subtracting 16 * sum(y) turns u = w + 1 back into w.
++        const int32x4_t tot = vsubq_s32(vpaddq_s32(t0, t1), vdupq_n_s32(16 * ysum));
++
++        const float32x4_t dw = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16((const uint16_t *) x[i].d)));
++        acc = vfmaq_f32(acc, vcvtq_f32_s32(tot), vmulq_n_f32(dw, yb->d * (1.0f / 16.0f)));
++    }
++
++    vst1q_f32(s, acc);
++}
++
++static int repack_pq2_0_to_t2x4(struct ggml_tensor * t, const void * GGML_RESTRICT data, size_t data_size) {
++    GGML_ASSERT(t->type == GGML_TYPE_PQ2_0);
++    const int64_t nrow = ggml_nrows(t);
++    const int64_t nb   = t->ne[0] / QK_PQ2_0;
++    GGML_ASSERT(data_size == (size_t) nrow * nb * sizeof(block_pq2_0));
++    if (nrow % 4 != 0 || t->ne[0] % QK_K != 0) {
++        return -1;
++    }
++
++    const block_pq2_0 * src = (const block_pq2_0 *) data;
++    block_pq2_0_t2x4 *  dst = (block_pq2_0_t2x4 *) t->data;
++
++    for (int64_t r4 = 0; r4 < nrow; r4 += 4) {
++        for (int64_t i = 0; i < nb; ++i) {
++            block_pq2_0_t2x4 out;
++            for (int r = 0; r < 4; ++r) {
++                out.d[r] = src[(r4 + r) * nb + i].d;
++            }
++            for (int p = 0; p < 2; ++p) {
++                for (int wd = 0; wd < 4; ++wd) {
++                    for (int j = 0; j < 16; ++j) {
++                        const block_pq2_0 & b = src[(r4 + 2 * p + (j >= 8)) * nb + i];
++                        uint8_t byte = 0;
++                        for (int sl = 0; sl < 4; ++sl) {
++                            const int w = 8 * (4 * wd + sl) + (j & 7); // PQ2_0 keeps weight w at qs[w / 4], bits 2 * (w % 4)
++                            byte |= (uint8_t) (((b.qs[w / 4] >> (2 * (w % 4))) & 3) << (2 * sl));
++                        }
++                        out.qs[p][wd][j] = byte;
++                    }
++                }
++            }
++            dst[(r4 / 4) * nb + i] = out;
++        }
++    }
++    return 0;
++}
++
++#if defined(__ARM_FEATURE_MATMUL_INT8)
++// Prompt and speculative-verify batches with SMMLA. Q8_Kx4 already interleaves the 4 activation
++// rows in 8-byte chunks, and a decoded T2P slot is [row 2p chunk | row 2p+1 chunk]: both are
++// SMMLA operands as-is. Each weight is decoded once per 4 tokens instead of once per token.
++static void ggml_ciot_gemm_t2x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    const int nb  = n / QK_PQ2_0;
++    const int nbk = n / QK_K;
++    const block_pq2_0_t2x4 * x = (const block_pq2_0_t2x4 *) vx;
++    const block_q8_Kx4 *     y = (const block_q8_Kx4 *) vy;
++    const int8x16_t ones = vdupq_n_s8(1);
++
++    thread_local std::vector<int32_t> ysum;
++    ysum.resize((size_t) 4 * nb);
++
++    for (int yg = 0; yg < nr / 4; ++yg) {
++        const block_q8_Kx4 * yb = y + (size_t) yg * nbk;
++
++        // Per-block column sums, shared by every weight row (w . y = u . y - sum(y)).
++        for (int i = 0; i < nb; ++i) {
++            const int8_t * q = yb[i >> 1].qs + 512 * (i & 1);
++            int32x4_t s01 = vdupq_n_s32(0), s23 = vdupq_n_s32(0);
++            for (int c = 0; c < 16; ++c) {
++                s01 = vdotq_s32(s01, vld1q_s8(q + 32 * c), ones);
++                s23 = vdotq_s32(s23, vld1q_s8(q + 32 * c + 16), ones);
++            }
++            vst1q_s32(ysum.data() + 4 * i, vpaddq_s32(s01, s23));
++        }
++
++        for (int xg = 0; xg < nc / 4; ++xg) {
++            const block_pq2_0_t2x4 * xb = x + (size_t) xg * nb;
++            float32x4_t acc[2][2];
++            for (int p = 0; p < 2; ++p) {
++                for (int q = 0; q < 2; ++q) {
++                    acc[p][q] = vdupq_n_f32(0.0f);
++                }
++            }
++
++            for (int i = 0; i < nb; ++i) {
++                const block_q8_Kx4 * yk = yb + (i >> 1);
++                const int8_t * q8 = yk->qs + 512 * (i & 1);
++
++                // [pair][col pair], lanes (row 2p, col 2q), (2p, 2q+1), (2p+1, 2q), (2p+1, 2q+1);
++                // m1 holds slots 0 and 3, m4 slot 1 (scaled x4), m16 slot 2 (scaled x16)
++                int32x4_t m1[2][2], m4[2][2], m16[2][2];
++                for (int p = 0; p < 2; ++p) {
++                    for (int q = 0; q < 2; ++q) {
++                        m1[p][q] = m4[p][q] = m16[p][q] = vdupq_n_s32(0);
++                    }
++                }
++
++                for (int wd = 0; wd < 4; ++wd) {
++                    const uint8x16_t v0 = vld1q_u8(xb[i].qs[0][wd]);
++                    const uint8x16_t v1 = vld1q_u8(xb[i].qs[1][wd]);
++                    const int8_t *   qw = q8 + 32 * (4 * wd); // chunk 4wd + slot is at qw + 32 * slot
++                    auto mm = [&](int32x4_t (&acc_)[2][2], int8x16_t w0, int8x16_t w1, int slot) {
++                        const int8x16_t b01 = vld1q_s8(qw + 32 * slot), b23 = vld1q_s8(qw + 32 * slot + 16);
++                        acc_[0][0] = vmmlaq_s32(acc_[0][0], w0, b01);
++                        acc_[0][1] = vmmlaq_s32(acc_[0][1], w0, b23);
++                        acc_[1][0] = vmmlaq_s32(acc_[1][0], w1, b01);
++                        acc_[1][1] = vmmlaq_s32(acc_[1][1], w1, b23);
++                    };
++                    mm(m1,  ggml_ciot_slot0(v0), ggml_ciot_slot0(v1), 0);
++                    mm(m4,  ggml_ciot_slot1(v0), ggml_ciot_slot1(v1), 1);
++                    mm(m16, ggml_ciot_slot2(v0), ggml_ciot_slot2(v1), 2);
++                    mm(m1,  ggml_ciot_slot3(v0), ggml_ciot_slot3(v1), 3);
++                }
++
++                const float32x4_t dw = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16((const uint16_t *) xb[i].d)));
++                const float32x4_t dy = vld1q_f32(yk->d);
++                const int32x4_t   ys = vld1q_s32(ysum.data() + 4 * i);
++                const float32x4_t rows[2] = { vzip1q_f32(dw, dw), vzip2q_f32(dw, dw) };
++                const float32x4_t cols[2] = { vcombine_f32(vget_low_f32(dy), vget_low_f32(dy)),
++                                              vcombine_f32(vget_high_f32(dy), vget_high_f32(dy)) };
++                const int32x4_t   ysq[2]  = { vcombine_s32(vget_low_s32(ys), vget_low_s32(ys)),
++                                              vcombine_s32(vget_high_s32(ys), vget_high_s32(ys)) };
++                for (int p = 0; p < 2; ++p) {
++                    for (int q = 0; q < 2; ++q) {
++                        // 16 * (u . y) - 16 * sum(y) = 16 * (w . y); the 1/16 is exact in the scale
++                        const int32x4_t t = vmlaq_n_s32(vmlaq_n_s32(m16[p][q], m4[p][q], 4), m1[p][q], 16);
++                        const int32x4_t w = vsubq_s32(t, vshlq_n_s32(ysq[q], 4));
++                        acc[p][q] = vfmaq_f32(acc[p][q], vcvtq_f32_s32(w), vmulq_n_f32(vmulq_f32(rows[p], cols[q]), 1.0f / 16.0f));
++                    }
++                }
++            }
++
++            for (int p = 0; p < 2; ++p) {
++                for (int q = 0; q < 2; ++q) {
++                    float out[4];
++                    vst1q_f32(out, acc[p][q]);
++                    for (int l = 0; l < 4; ++l) {
++                        s[(size_t) (4 * yg + 2 * q + (l & 1)) * bs + 4 * xg + 2 * p + (l >> 1)] = out[l];
++                    }
++                }
++            }
++        }
++    }
++}
++#else
++// Prompt batches arrive as block_q8_Kx4 (8-byte interleave). Split each group of four
++// activation rows back into plain block_q8_K rows and reuse the decode kernel.
++static void ggml_ciot_gemm_t2x4_q8_K(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    const int nb  = n / QK_PQ2_0;
++    const int nbk = n / QK_K;
++    const block_pq2_0_t2x4 * x  = (const block_pq2_0_t2x4 *) vx;
++    const block_q8_Kx4 *     y4 = (const block_q8_Kx4 *) vy;
++
++    thread_local std::vector<block_q8_K> rows;
++    rows.resize((size_t) 4 * nbk);
++
++    for (int yg = 0; yg < nr / 4; ++yg) {
++        for (int b = 0; b < nbk; ++b) {
++            const block_q8_Kx4 & src = y4[(size_t) yg * nbk + b];
++            for (int r = 0; r < 4; ++r) {
++                block_q8_K & dst = rows[(size_t) r * nbk + b];
++                dst.d = src.d[r];
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memcpy(dst.qs + 8 * c, src.qs + 32 * c + 8 * r, 8);
++                }
++                for (int j = 0; j < QK_K / 16; ++j) {
++                    int sum = 0;
++                    for (int k = 0; k < 16; ++k) {
++                        sum += dst.qs[16 * j + k];
++                    }
++                    dst.bsums[j] = (int16_t) sum;
++                }
++            }
++        }
++        for (int r = 0; r < 4; ++r) {
++            for (int c = 0; c < nc; c += 4) {
++                ggml_ciot_gemv_t2x4_q8_K(n, s + (size_t) (4 * yg + r) * bs + c, x + (size_t) (c / 4) * nb, rows.data() + (size_t) r * nbk);
++            }
++        }
++    }
++}
++#endif // __ARM_FEATURE_MATMUL_INT8
++
++template <> inline void ggml_repack_quantize_mat<block_pq2_0, 16, GGML_TYPE_Q8_K>(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t nrow, int64_t n_per_row) {
++    ggml_quantize_mat_t<8, GGML_TYPE_Q8_K>(x, vy, nrow, n_per_row);
++}
++#endif // __aarch64__ && __ARM_FEATURE_DOTPROD
++
+ template <int M, int N>
+ static void ggml_gemv_q6_K_NxM_q8_K_generic_impl(int                        n,
+                                                  float * GGML_RESTRICT      s,
+@@ -4612,6 +4873,12 @@ template <> int repack<block_pq2_0, 8, 4>(struct ggml_tensor * t, const void * d
+     return repack_pq2_0_to_pq2_0_4_bl(t, 8, data, data_size);
+ }
+ 
++#ifdef GGML_CIOT_T2
++template <> int repack<block_pq2_0, 16, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
++    return repack_pq2_0_to_t2x4(t, data, data_size);
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
+     return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
+@@ -4721,6 +4988,18 @@ template <> void gemv<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+     ggml_gemv_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++#ifdef GGML_CIOT_T2
++template <> void gemv<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    GGML_UNUSED(bs);
++    GGML_UNUSED(nr);
++    const int nb = n / QK_PQ2_0;
++    const block_pq2_0_t2x4 * x = (const block_pq2_0_t2x4 *) vx;
++    for (int c = 0; c < nc; c += 4) {
++        ggml_ciot_gemv_t2x4_q8_K(n, s + c, x + (size_t) (c / 4) * nb, (const block_q8_K *) vy);
++    }
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -4830,6 +5109,59 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+     ggml_gemm_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++#ifdef GGML_CIOT_T2
++template <> void gemm<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    ggml_ciot_gemm_t2x4_q8_K(n, s, bs, vx, vy, nr, nc);
++}
++#endif
++
++// The 1..3 activation rows left over after the 4-row gemm tiles. Default: one gemv per row,
++// which streams the weights once per row. s is the first leftover row's output, ds its row
++// stride in floats; vy the first leftover quantized row, vy_stride its row stride in bytes.
++template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE>
++void gemv_rows(int n, float * s, size_t ds, size_t bs, const void * vx, const char * vy, size_t vy_stride, int nrows, int nc) {
++    for (int r = 0; r < nrows; r++) {
++        gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(n, s + r * ds, bs, vx, vy + r * vy_stride, 1, nc);
++    }
++}
++
++#if defined(GGML_CIOT_T2) && defined(__ARM_FEATURE_MATMUL_INT8)
++// T2: 2 or 3 leftover rows (short speculative verify batches) are zero-padded into one Q8_Kx4
++// group and run through the SMMLA kernel, so the weights are streamed once instead of per row.
++template <> void gemv_rows<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t ds, size_t bs, const void * vx, const char * vy, size_t vy_stride, int nrows, int nc) {
++    if (nrows == 1) {
++        gemv<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(n, s, bs, vx, vy, 1, nc);
++        return;
++    }
++    const int nbk = n / QK_K;
++    thread_local std::vector<block_q8_Kx4> y4;
++    thread_local std::vector<float>        out;
++    y4.resize(nbk);
++    out.resize((size_t) 4 * nc);
++    for (int b = 0; b < nbk; ++b) {
++        block_q8_Kx4 & dst = y4[b];
++        for (int r = 0; r < 4; ++r) {
++            if (r < nrows) {
++                const block_q8_K * src = (const block_q8_K *) (vy + r * vy_stride) + b;
++                dst.d[r] = src->d;
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memcpy(dst.qs + 32 * c + 8 * r, src->qs + 8 * c, 8);
++                }
++            } else {
++                dst.d[r] = 0.0f;
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memset(dst.qs + 32 * c + 8 * r, 0, 8);
++                }
++            }
++        }
++    }
++    ggml_ciot_gemm_t2x4_q8_K(n, out.data(), (size_t) nc, vx, y4.data(), 4, nc);
++    for (int r = 0; r < nrows; ++r) {
++        memcpy(s + r * ds, out.data() + (size_t) r * nc, (size_t) nc * sizeof(float));
++    }
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -4945,10 +5277,12 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+                                                              src0_ptr + src0_start * nb01, src1_ptr,
+                                                              nrows - (nrows % 4), ncols);
+         }
+-        for (int iter = nrows - (nrows % 4); iter < nrows; iter++) {
+-            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, (float *) (dst_ptr + (iter * nb1)) + src0_start,
+-                                                             ne01, src0_ptr + src0_start * nb01,
+-                                                             src1_ptr + (src1_col_stride * iter), 1 /* nrows */, ncols);
++        const int64_t first_left = nrows - (nrows % 4);
++        if (first_left < nrows) {
++            gemv_rows<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, (float *) (dst_ptr + (first_left * nb1)) + src0_start, nb1 / sizeof(float),
++                                                                  ne01, src0_ptr + src0_start * nb01,
++                                                                  src1_ptr + (src1_col_stride * first_left), src1_col_stride,
++                                                                  (int) (nrows - first_left), ncols);
+         }
+     }
+ 
+@@ -5262,6 +5596,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+ 
+     // instance for Q2_0
+     static const ggml::cpu::repack::tensor_traits<block_pq2_0, 8, 4, GGML_TYPE_Q8_0> pq2_0_4x8_q8_0;
++#ifdef GGML_CIOT_T2
++    static const ggml::cpu::repack::tensor_traits<block_pq2_0, 16, 4, GGML_TYPE_Q8_K> pq2_0_t2x4_q8_K;
++#endif
+ 
+     // instances for RISC-V
+     //
+@@ -5451,6 +5788,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+                 return &pq2_0_4x8_q8_0;
+             }
+         }
++#ifdef GGML_CIOT_T2
++        if (ggml_ciot_t2_enabled() && ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
++            if (cur->ne[1] % 4 == 0 && cur->ne[0] % QK_K == 0) {
++                return &pq2_0_t2x4_q8_K;
++            }
++        }
++#endif
+     }
+ 
+     return nullptr;

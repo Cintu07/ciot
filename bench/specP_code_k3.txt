@@ -1,0 +1,47 @@
+check oracle : 229/229 drafts accepted, first mismatch vs greedy: none
+check junk   : 0/912 drafts accepted, first mismatch vs greedy: none
+
+--- output (speculative) ---
+```python
+import json
+import os
+from typing import Any, Dict, Optional
+
+
+def load_config(path: str, defaults: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if defaults is None:
+        defaults = {}
+    if not os.path.exists(path):
+        return dict(defaults)
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    merged = dict(defaults)
+    for key, value in data.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
+        else:
+            merged[key] = value
+    return merged
+
+
+def save_config(path: str, config: Dict[str, Any]) -> None:
+    tmp_path = path + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, indent=2, sort_keys=True)
+    os.replace(tmp_path, path)
+
+
+def get_setting(config: Dict[str, Any], dotted_key: str, fallback: Any = None) -> Any:
+    node = config
+    for part in dotted_key.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return fallback
+        node = node[part]
+    return node
+```
+---
+prompt tokens     : 296
+greedy            : 306 tokens in 32.68 s = 9.36 tok/s
+speculative (k=3) : 306 tokens in 21.89 s = 13.98 tok/s, 136 verify steps, 170/231 drafts accepted (74%)
+speedup           : 1.49x
+token mismatches  : 0

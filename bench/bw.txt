@@ -1,0 +1,6 @@
+hardware threads: 8
+threads= 1  read bandwidth best 60.9 GB/s  median 60.4 GB/s
+threads= 2  read bandwidth best 83.1 GB/s  median 78.2 GB/s
+threads= 4  read bandwidth best 114.1 GB/s  median 102.2 GB/s
+threads= 8  read bandwidth best 110.3 GB/s  median 109.3 GB/s
+threads= 8  read bandwidth best 116.6 GB/s  median 115.0 GB/s

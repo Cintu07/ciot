@@ -1,0 +1,3 @@
+Question: Why does a ternary neural network (weights in -1, 0, +1) run faster on a CPU than the same network stored in 16-bit floats? Explain memory bandwidth, the cost of multiplication versus addition, and what limits the speed in practice.
+
+Answer:

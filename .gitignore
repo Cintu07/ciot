@@ -1,0 +1,10 @@
+models/
+vendor/
+build/
+*.gguf
+*.exe
+*.log
+models/*.txt
+__pycache__/
+bench/eval/results/smoke*
+*.err

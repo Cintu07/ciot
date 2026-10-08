@@ -1,0 +1,5 @@
+bit-exact vs T2: gemv ok, gemm ok, gemm vs gemv ok (512 outputs)
+
+matvec 32768x8192, 8 threads: T2 0.709 ms (100.6 GB/s) | T2P 0.666 ms (107.0 GB/s)
+smmla  4 tokens x 17408x5120, 8 threads: T2 0.414 ms (862 GMAC/s) | T2P 0.314 ms (1136 GMAC/s) | 1.32x
+smmla 64 tokens x 17408x5120, 8 threads: T2 6.708 ms (850 GMAC/s) | T2P 5.300 ms (1076 GMAC/s) | 1.27x

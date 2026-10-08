@@ -1,0 +1,4 @@
+*.sh text eol=lf
+*.patch -text
+bench/prompts/*.txt -text
+bench/eval/data/*.jsonl -text

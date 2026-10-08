@@ -1,0 +1,382 @@
+diff --git a/ggml/src/ggml-cpu/repack.cpp b/ggml/src/ggml-cpu/repack.cpp
+index 4471c9a..1aad36f 100644
+--- a/ggml/src/ggml-cpu/repack.cpp
++++ b/ggml/src/ggml-cpu/repack.cpp
+@@ -447,6 +447,247 @@ template <> inline void ggml_repack_quantize_mat<block_q1_0, 8, GGML_TYPE_Q8_0>(
+     ggml_quantize_mat_q8_0_4x8_g128(x, vy, n_per_row);
+ }
+ 
++#if defined(__aarch64__) && defined(__ARM_FEATURE_DOTPROD)
++// PQ2_0 repacked for AArch64 (tag: INTER_SIZE 16, NB_COLS 4, Q8_K activations). Same 2-bit codes u = w + 1 and scales, 4 rows per 128-weight block, same size as 4 PQ2_0 blocks.
++// Rows are in pairs. Byte j of word w of pair p holds row 2p + (j >= 8), weight 8 * (4w + s) + (j & 7) in bits 2s..2s+1.
++// So (word >> 2s) & 3 is one 8-weight chunk of both rows of the pair: an SMMLA operand as-is, and one SDOT for two rows.
++// The +1 offset is removed once per block with the Q8_K bsums.
++#include <arm_neon.h>
++#include <vector>
++
++#define GGML_PQ2_0_4X16 1
++
++struct block_pq2_0x4_pair {
++    ggml_half d[4];
++    uint8_t   qs[2][4][16]; // [pair][word][byte]
++};
++
++// Slots 1 and 2 stay in place (scaled by 4 and 16) and use their own accumulators, so no shift is needed.
++static inline int8x16_t pq2_0_pair_slot0(uint8x16_t v) { return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x03))); }
++static inline int8x16_t pq2_0_pair_slot1(uint8x16_t v) { return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x0C))); }
++static inline int8x16_t pq2_0_pair_slot2(uint8x16_t v) { return vreinterpretq_s8_u8(vandq_u8(v, vdupq_n_u8(0x30))); }
++static inline int8x16_t pq2_0_pair_slot3(uint8x16_t v) { return vreinterpretq_s8_u8(vshrq_n_u8(v, 6)); }
++static_assert(sizeof(block_pq2_0x4_pair) == 4 * sizeof(block_pq2_0), "wrong pq2_0x4_pair block size/padding");
++
++// s[0..3] = dot(row r, y) for the 4 rows in x. SDOT with the chunk's 8 activations in both halves gives row 2p in lanes 0-1, row 2p+1 in lanes 2-3.
++static void ggml_gemv_pq2_0_4x16_q8_K_neon(int n, float * GGML_RESTRICT s, const block_pq2_0x4_pair * GGML_RESTRICT x, const block_q8_K * GGML_RESTRICT y) {
++    const int nb = n / QK_PQ2_0;
++
++    float32x4_t acc = vdupq_n_f32(0.0f);
++
++    for (int i = 0; i < nb; ++i) {
++        const block_q8_K * GGML_RESTRICT yb = y + (i >> 1);
++        const int8_t * GGML_RESTRICT q8 = yb->qs + 128 * (i & 1);
++        const int32_t ysum = vaddlvq_s16(vld1q_s16(yb->bsums + 8 * (i & 1)));
++
++        // one accumulator per (pair, slot): 8 independent SDOT chains
++        int32x4_t a[2][4];
++        for (int p = 0; p < 2; ++p) {
++            for (int sl = 0; sl < 4; ++sl) {
++                a[p][sl] = vdupq_n_s32(0);
++            }
++        }
++        for (int wd = 0; wd < 4; ++wd) {
++            int8x16_t yc[4];
++            for (int sl = 0; sl < 4; ++sl) {
++                yc[sl] = vreinterpretq_s8_u64(vld1q_dup_u64((const uint64_t *) (q8 + 8 * (4 * wd + sl))));
++            }
++            for (int p = 0; p < 2; ++p) {
++                const uint8x16_t v = vld1q_u8(x[i].qs[p][wd]);
++                a[p][0] = vdotq_s32(a[p][0], pq2_0_pair_slot0(v), yc[0]);
++                a[p][1] = vdotq_s32(a[p][1], pq2_0_pair_slot1(v), yc[1]);
++                a[p][2] = vdotq_s32(a[p][2], pq2_0_pair_slot2(v), yc[2]);
++                a[p][3] = vdotq_s32(a[p][3], pq2_0_pair_slot3(v), yc[3]);
++            }
++        }
++        const int32x4_t t0 = vmlaq_n_s32(vmlaq_n_s32(a[0][2], a[0][1], 4), vaddq_s32(a[0][0], a[0][3]), 16);
++        const int32x4_t t1 = vmlaq_n_s32(vmlaq_n_s32(a[1][2], a[1][1], 4), vaddq_s32(a[1][0], a[1][3]), 16);
++
++        // [row0..row3] = 16 * (u . y); subtracting 16 * sum(y) turns u = w + 1 back into w.
++        const int32x4_t tot = vsubq_s32(vpaddq_s32(t0, t1), vdupq_n_s32(16 * ysum));
++
++        const float32x4_t dw = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16((const uint16_t *) x[i].d)));
++        acc = vfmaq_f32(acc, vcvtq_f32_s32(tot), vmulq_n_f32(dw, yb->d * (1.0f / 16.0f)));
++    }
++
++    vst1q_f32(s, acc);
++}
++
++static int repack_pq2_0_to_pq2_0_4x16(struct ggml_tensor * t, const void * GGML_RESTRICT data, size_t data_size) {
++    GGML_ASSERT(t->type == GGML_TYPE_PQ2_0);
++    const int64_t nrow = ggml_nrows(t);
++    const int64_t nb   = t->ne[0] / QK_PQ2_0;
++    GGML_ASSERT(data_size == (size_t) nrow * nb * sizeof(block_pq2_0));
++    if (nrow % 4 != 0 || t->ne[0] % QK_K != 0) {
++        return -1;
++    }
++
++    const block_pq2_0 * src = (const block_pq2_0 *) data;
++    block_pq2_0x4_pair *  dst = (block_pq2_0x4_pair *) t->data;
++
++    for (int64_t r4 = 0; r4 < nrow; r4 += 4) {
++        for (int64_t i = 0; i < nb; ++i) {
++            block_pq2_0x4_pair out;
++            for (int r = 0; r < 4; ++r) {
++                out.d[r] = src[(r4 + r) * nb + i].d;
++            }
++            for (int p = 0; p < 2; ++p) {
++                for (int wd = 0; wd < 4; ++wd) {
++                    for (int j = 0; j < 16; ++j) {
++                        const block_pq2_0 & b = src[(r4 + 2 * p + (j >= 8)) * nb + i];
++                        uint8_t byte = 0;
++                        for (int sl = 0; sl < 4; ++sl) {
++                            const int w = 8 * (4 * wd + sl) + (j & 7); // PQ2_0 keeps weight w at qs[w / 4], bits 2 * (w % 4)
++                            byte |= (uint8_t) (((b.qs[w / 4] >> (2 * (w % 4))) & 3) << (2 * sl));
++                        }
++                        out.qs[p][wd][j] = byte;
++                    }
++                }
++            }
++            dst[(r4 / 4) * nb + i] = out;
++        }
++    }
++    return 0;
++}
++
++#if defined(__ARM_FEATURE_MATMUL_INT8)
++// Batches with SMMLA: Q8_Kx4 chunks and decoded pair slots are both SMMLA operands as-is. Each weight is decoded once per 4 tokens.
++static void ggml_gemm_pq2_0_4x16_q8_K_neon(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    const int nb  = n / QK_PQ2_0;
++    const int nbk = n / QK_K;
++    const block_pq2_0x4_pair * x = (const block_pq2_0x4_pair *) vx;
++    const block_q8_Kx4 *     y = (const block_q8_Kx4 *) vy;
++    const int8x16_t ones = vdupq_n_s8(1);
++
++    thread_local std::vector<int32_t> ysum;
++    ysum.resize((size_t) 4 * nb);
++
++    for (int yg = 0; yg < nr / 4; ++yg) {
++        const block_q8_Kx4 * yb = y + (size_t) yg * nbk;
++
++        // Per-block column sums, shared by every weight row (w . y = u . y - sum(y)).
++        for (int i = 0; i < nb; ++i) {
++            const int8_t * q = yb[i >> 1].qs + 512 * (i & 1);
++            int32x4_t s01 = vdupq_n_s32(0), s23 = vdupq_n_s32(0);
++            for (int c = 0; c < 16; ++c) {
++                s01 = vdotq_s32(s01, vld1q_s8(q + 32 * c), ones);
++                s23 = vdotq_s32(s23, vld1q_s8(q + 32 * c + 16), ones);
++            }
++            vst1q_s32(ysum.data() + 4 * i, vpaddq_s32(s01, s23));
++        }
++
++        for (int xg = 0; xg < nc / 4; ++xg) {
++            const block_pq2_0x4_pair * xb = x + (size_t) xg * nb;
++            float32x4_t acc[2][2];
++            for (int p = 0; p < 2; ++p) {
++                for (int q = 0; q < 2; ++q) {
++                    acc[p][q] = vdupq_n_f32(0.0f);
++                }
++            }
++
++            for (int i = 0; i < nb; ++i) {
++                const block_q8_Kx4 * yk = yb + (i >> 1);
++                const int8_t * q8 = yk->qs + 512 * (i & 1);
++
++                // [pair][col pair], lanes (row 2p, col 2q), (2p, 2q+1), (2p+1, 2q), (2p+1, 2q+1);
++                // m1 holds slots 0 and 3, m4 slot 1 (scaled x4), m16 slot 2 (scaled x16)
++                int32x4_t m1[2][2], m4[2][2], m16[2][2];
++                for (int p = 0; p < 2; ++p) {
++                    for (int q = 0; q < 2; ++q) {
++                        m1[p][q] = m4[p][q] = m16[p][q] = vdupq_n_s32(0);
++                    }
++                }
++
++                for (int wd = 0; wd < 4; ++wd) {
++                    const uint8x16_t v0 = vld1q_u8(xb[i].qs[0][wd]);
++                    const uint8x16_t v1 = vld1q_u8(xb[i].qs[1][wd]);
++                    const int8_t *   qw = q8 + 32 * (4 * wd); // chunk 4wd + slot is at qw + 32 * slot
++                    auto mm = [&](int32x4_t (&acc_)[2][2], int8x16_t w0, int8x16_t w1, int slot) {
++                        const int8x16_t b01 = vld1q_s8(qw + 32 * slot), b23 = vld1q_s8(qw + 32 * slot + 16);
++                        acc_[0][0] = vmmlaq_s32(acc_[0][0], w0, b01);
++                        acc_[0][1] = vmmlaq_s32(acc_[0][1], w0, b23);
++                        acc_[1][0] = vmmlaq_s32(acc_[1][0], w1, b01);
++                        acc_[1][1] = vmmlaq_s32(acc_[1][1], w1, b23);
++                    };
++                    mm(m1,  pq2_0_pair_slot0(v0), pq2_0_pair_slot0(v1), 0);
++                    mm(m4,  pq2_0_pair_slot1(v0), pq2_0_pair_slot1(v1), 1);
++                    mm(m16, pq2_0_pair_slot2(v0), pq2_0_pair_slot2(v1), 2);
++                    mm(m1,  pq2_0_pair_slot3(v0), pq2_0_pair_slot3(v1), 3);
++                }
++
++                const float32x4_t dw = vcvt_f32_f16(vreinterpret_f16_u16(vld1_u16((const uint16_t *) xb[i].d)));
++                const float32x4_t dy = vld1q_f32(yk->d);
++                const int32x4_t   ys = vld1q_s32(ysum.data() + 4 * i);
++                const float32x4_t rows[2] = { vzip1q_f32(dw, dw), vzip2q_f32(dw, dw) };
++                const float32x4_t cols[2] = { vcombine_f32(vget_low_f32(dy), vget_low_f32(dy)),
++                                              vcombine_f32(vget_high_f32(dy), vget_high_f32(dy)) };
++                const int32x4_t   ysq[2]  = { vcombine_s32(vget_low_s32(ys), vget_low_s32(ys)),
++                                              vcombine_s32(vget_high_s32(ys), vget_high_s32(ys)) };
++                for (int p = 0; p < 2; ++p) {
++                    for (int q = 0; q < 2; ++q) {
++                        // 16 * (u . y) - 16 * sum(y) = 16 * (w . y); the 1/16 is exact in the scale
++                        const int32x4_t t = vmlaq_n_s32(vmlaq_n_s32(m16[p][q], m4[p][q], 4), m1[p][q], 16);
++                        const int32x4_t w = vsubq_s32(t, vshlq_n_s32(ysq[q], 4));
++                        acc[p][q] = vfmaq_f32(acc[p][q], vcvtq_f32_s32(w), vmulq_n_f32(vmulq_f32(rows[p], cols[q]), 1.0f / 16.0f));
++                    }
++                }
++            }
++
++            for (int p = 0; p < 2; ++p) {
++                for (int q = 0; q < 2; ++q) {
++                    float out[4];
++                    vst1q_f32(out, acc[p][q]);
++                    for (int l = 0; l < 4; ++l) {
++                        s[(size_t) (4 * yg + 2 * q + (l & 1)) * bs + 4 * xg + 2 * p + (l >> 1)] = out[l];
++                    }
++                }
++            }
++        }
++    }
++}
++#else
++// Without i8mm: split each block_q8_Kx4 back into 4 block_q8_K rows and use the gemv kernel.
++static void ggml_gemm_pq2_0_4x16_q8_K_neon(int n, float * GGML_RESTRICT s, size_t bs, const void * GGML_RESTRICT vx, const void * GGML_RESTRICT vy, int nr, int nc) {
++    const int nb  = n / QK_PQ2_0;
++    const int nbk = n / QK_K;
++    const block_pq2_0x4_pair * x  = (const block_pq2_0x4_pair *) vx;
++    const block_q8_Kx4 *     y4 = (const block_q8_Kx4 *) vy;
++
++    thread_local std::vector<block_q8_K> rows;
++    rows.resize((size_t) 4 * nbk);
++
++    for (int yg = 0; yg < nr / 4; ++yg) {
++        for (int b = 0; b < nbk; ++b) {
++            const block_q8_Kx4 & src = y4[(size_t) yg * nbk + b];
++            for (int r = 0; r < 4; ++r) {
++                block_q8_K & dst = rows[(size_t) r * nbk + b];
++                dst.d = src.d[r];
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memcpy(dst.qs + 8 * c, src.qs + 32 * c + 8 * r, 8);
++                }
++                for (int j = 0; j < QK_K / 16; ++j) {
++                    int sum = 0;
++                    for (int k = 0; k < 16; ++k) {
++                        sum += dst.qs[16 * j + k];
++                    }
++                    dst.bsums[j] = (int16_t) sum;
++                }
++            }
++        }
++        for (int r = 0; r < 4; ++r) {
++            for (int c = 0; c < nc; c += 4) {
++                ggml_gemv_pq2_0_4x16_q8_K_neon(n, s + (size_t) (4 * yg + r) * bs + c, x + (size_t) (c / 4) * nb, rows.data() + (size_t) r * nbk);
++            }
++        }
++    }
++}
++#endif // __ARM_FEATURE_MATMUL_INT8
++
++template <> inline void ggml_repack_quantize_mat<block_pq2_0, 16, GGML_TYPE_Q8_K>(const float * GGML_RESTRICT x, void * GGML_RESTRICT vy, int64_t nrow, int64_t n_per_row) {
++    ggml_quantize_mat_t<8, GGML_TYPE_Q8_K>(x, vy, nrow, n_per_row);
++}
++#endif // __aarch64__ && __ARM_FEATURE_DOTPROD
++
+ template <int M, int N>
+ static void ggml_gemv_q6_K_NxM_q8_K_generic_impl(int                        n,
+                                                  float * GGML_RESTRICT      s,
+@@ -4612,6 +4853,12 @@ template <> int repack<block_pq2_0, 8, 4>(struct ggml_tensor * t, const void * d
+     return repack_pq2_0_to_pq2_0_4_bl(t, 8, data, data_size);
+ }
+ 
++#ifdef GGML_PQ2_0_4X16
++template <> int repack<block_pq2_0, 16, 4>(struct ggml_tensor * t, const void * data, size_t data_size) {
++    return repack_pq2_0_to_pq2_0_4x16(t, data, data_size);
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> int repack<block_q4_0, 1, 16>(struct ggml_tensor * t, const void * data, size_t data_size) {
+     return repack_q4_0_to_q4_0_16_bl(t, 1, data, data_size);
+@@ -4721,6 +4968,18 @@ template <> void gemv<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+     ggml_gemv_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++#ifdef GGML_PQ2_0_4X16
++template <> void gemv<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    GGML_UNUSED(bs);
++    GGML_UNUSED(nr);
++    const int nb = n / QK_PQ2_0;
++    const block_pq2_0x4_pair * x = (const block_pq2_0x4_pair *) vx;
++    for (int c = 0; c < nc; c += 4) {
++        ggml_gemv_pq2_0_4x16_q8_K_neon(n, s + c, x + (size_t) (c / 4) * nb, (const block_q8_K *) vy);
++    }
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> void gemv<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemv_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -4830,6 +5089,56 @@ template <> void gemm<block_pq2_0, 8, 4, GGML_TYPE_Q8_0>(int n, float * s, size_
+     ggml_gemm_pq2_0_4x8_q8_0(n, s, bs, vx, vy, nr, nc);
+ }
+ 
++#ifdef GGML_PQ2_0_4X16
++template <> void gemm<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
++    ggml_gemm_pq2_0_4x16_q8_K_neon(n, s, bs, vx, vy, nr, nc);
++}
++#endif
++
++// The 1..3 src1 rows left after the 4-row gemm tiles. Default: one gemv per row. ds is the dst row stride in floats.
++template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PARAM_TYPE>
++void gemv_rows(int n, float * s, size_t ds, size_t bs, const void * vx, const char * vy, size_t vy_stride, int nrows, int nc) {
++    for (int r = 0; r < nrows; r++) {
++        gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(n, s + r * ds, bs, vx, vy + r * vy_stride, 1, nc);
++    }
++}
++
++#if defined(GGML_PQ2_0_4X16) && defined(__ARM_FEATURE_MATMUL_INT8)
++// 2 or 3 left rows (short speculative verify batches): pad to one Q8_Kx4 group so the weights are read once, not once per row.
++template <> void gemv_rows<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(int n, float * s, size_t ds, size_t bs, const void * vx, const char * vy, size_t vy_stride, int nrows, int nc) {
++    if (nrows == 1) {
++        gemv<block_pq2_0, 16, 4, GGML_TYPE_Q8_K>(n, s, bs, vx, vy, 1, nc);
++        return;
++    }
++    const int nbk = n / QK_K;
++    thread_local std::vector<block_q8_Kx4> y4;
++    thread_local std::vector<float>        out;
++    y4.resize(nbk);
++    out.resize((size_t) 4 * nc);
++    for (int b = 0; b < nbk; ++b) {
++        block_q8_Kx4 & dst = y4[b];
++        for (int r = 0; r < 4; ++r) {
++            if (r < nrows) {
++                const block_q8_K * src = (const block_q8_K *) (vy + r * vy_stride) + b;
++                dst.d[r] = src->d;
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memcpy(dst.qs + 32 * c + 8 * r, src->qs + 8 * c, 8);
++                }
++            } else {
++                dst.d[r] = 0.0f;
++                for (int c = 0; c < QK_K / 8; ++c) {
++                    memset(dst.qs + 32 * c + 8 * r, 0, 8);
++                }
++            }
++        }
++    }
++    ggml_gemm_pq2_0_4x16_q8_K_neon(n, out.data(), (size_t) nc, vx, y4.data(), 4, nc);
++    for (int r = 0; r < nrows; ++r) {
++        memcpy(s + r * ds, out.data() + (size_t) r * nc, (size_t) nc * sizeof(float));
++    }
++}
++#endif
++
+ #if defined __riscv_zvfh
+ template <> void gemm<block_q4_0, 1, 16, GGML_TYPE_Q8_0>(int n, float * s, size_t bs, const void * vx, const void * vy, int nr, int nc) {
+     ggml_gemm_q4_0_16x1_q8_0(n, s, bs, vx, vy, nr, nc);
+@@ -4945,10 +5254,12 @@ template <typename BLOC_TYPE, int64_t INTER_SIZE, int64_t NB_COLS, ggml_type PAR
+                                                              src0_ptr + src0_start * nb01, src1_ptr,
+                                                              nrows - (nrows % 4), ncols);
+         }
+-        for (int iter = nrows - (nrows % 4); iter < nrows; iter++) {
+-            gemv<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, (float *) (dst_ptr + (iter * nb1)) + src0_start,
+-                                                             ne01, src0_ptr + src0_start * nb01,
+-                                                             src1_ptr + (src1_col_stride * iter), 1 /* nrows */, ncols);
++        const int64_t first_left = nrows - (nrows % 4);
++        if (first_left < nrows) {
++            gemv_rows<BLOC_TYPE, INTER_SIZE, NB_COLS, PARAM_TYPE>(ne00, (float *) (dst_ptr + (first_left * nb1)) + src0_start, nb1 / sizeof(float),
++                                                                  ne01, src0_ptr + src0_start * nb01,
++                                                                  src1_ptr + (src1_col_stride * first_left), src1_col_stride,
++                                                                  (int) (nrows - first_left), ncols);
+         }
+     }
+ 
+@@ -5262,6 +5573,9 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+ 
+     // instance for Q2_0
+     static const ggml::cpu::repack::tensor_traits<block_pq2_0, 8, 4, GGML_TYPE_Q8_0> pq2_0_4x8_q8_0;
++#ifdef GGML_PQ2_0_4X16
++    static const ggml::cpu::repack::tensor_traits<block_pq2_0, 16, 4, GGML_TYPE_Q8_K> pq2_0_4x16_q8_K;
++#endif
+ 
+     // instances for RISC-V
+     //
+@@ -5451,6 +5765,13 @@ static const ggml::cpu::tensor_traits * ggml_repack_get_optimal_repack_type(cons
+                 return &pq2_0_4x8_q8_0;
+             }
+         }
++#ifdef GGML_PQ2_0_4X16
++        if (ggml_cpu_has_neon() && ggml_cpu_has_dotprod()) {
++            if (cur->ne[1] % 4 == 0 && cur->ne[0] % QK_K == 0) {
++                return &pq2_0_4x16_q8_K;
++            }
++        }
++#endif
+     }
+ 
+     return nullptr;

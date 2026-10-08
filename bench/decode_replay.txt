@@ -1,0 +1,4 @@
+quarter model: 100 matvecs, 1.62 GB of T2 weights streamed per pass
+  ggml   (dynamic chunks)      17.50 ms per quarter pass ->   70.0 ms per token,   92.3 GB/s,  14.3 tok/s matmul-only
+  static (one slice/thread)    16.39 ms per quarter pass ->   65.5 ms per token,   98.6 GB/s,  15.3 tok/s matmul-only
+  fused  (gate+up, q+k+v)      15.36 ms per quarter pass ->   61.5 ms per token,  105.1 GB/s,  16.3 tok/s matmul-only

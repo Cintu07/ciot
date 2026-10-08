@@ -1,0 +1,22 @@
+exactness: all 4 kernels match the integer reference on 40 shapes
+  prism PTQ1_0 generic max |diff| vs prism PQ2_0 = 0.00e+00 (output magnitude 4.32e+00)
+  prism PQ2_0  NEON    max |diff| vs prism PQ2_0 = 0.00e+00 (output magnitude 4.32e+00)
+  ciot  PTQ1_0 NEON    max |diff| vs prism PQ2_0 = 9.54e-07 (output magnitude 4.32e+00)
+  ciot  T2x4   NEON    max |diff| vs prism PQ2_0 = 0.00e+00 (output magnitude 4.32e+00)
+
+32768x8192 matvec, weights streamed from DRAM. Last column: compute-limited tok/s for Bonsai 2 27B.
+threads=1
+  prism PTQ1_0 generic   99.411 ms     2.7 Gweights/s    0.6 GB/s   1.0x vs today  ~ 0.1 tok/s
+  prism PQ2_0  NEON       8.671 ms    31.0 Gweights/s    8.2 GB/s  11.5x vs today  ~ 1.2 tok/s
+  ciot  PTQ1_0 NEON      11.070 ms    24.3 Gweights/s    5.3 GB/s   9.0x vs today  ~ 0.9 tok/s
+  ciot  T2x4   NEON       5.350 ms    50.2 Gweights/s   13.3 GB/s  18.6x vs today  ~ 2.0 tok/s
+threads=4
+  prism PTQ1_0 generic   24.784 ms    10.8 Gweights/s    2.4 GB/s   1.0x vs today  ~ 0.4 tok/s
+  prism PQ2_0  NEON       2.242 ms   119.7 Gweights/s   31.8 GB/s  11.1x vs today  ~ 4.7 tok/s
+  ciot  PTQ1_0 NEON       2.760 ms    97.3 Gweights/s   21.3 GB/s   9.0x vs today  ~ 3.8 tok/s
+  ciot  T2x4   NEON       1.341 ms   200.2 Gweights/s   53.2 GB/s  18.5x vs today  ~ 7.8 tok/s
+threads=8
+  prism PTQ1_0 generic   13.645 ms    19.7 Gweights/s    4.3 GB/s   1.0x vs today  ~ 0.8 tok/s
+  prism PQ2_0  NEON       1.313 ms   204.5 Gweights/s   54.3 GB/s  10.4x vs today  ~ 8.0 tok/s
+  ciot  PTQ1_0 NEON       1.530 ms   175.4 Gweights/s   38.4 GB/s   8.9x vs today  ~ 6.9 tok/s
+  ciot  T2x4   NEON       0.951 ms   282.4 Gweights/s   75.0 GB/s  14.4x vs today  ~11.0 tok/s
