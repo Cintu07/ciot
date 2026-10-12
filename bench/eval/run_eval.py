@@ -110,13 +110,16 @@ def main():
     ap.add_argument("--server-args", default="")
     ap.add_argument("--server", default=SERVER, help="llama-server binary")
     ap.add_argument("--gpu", action="store_true", help="offload all layers to the GPU instead of the laptop CPU settings")
+    ap.add_argument("--gpu-auto", action="store_true", help="let the server fit layers into VRAM (for GPUs smaller than the model)")
     ap.add_argument("--out", default=os.path.join(HERE, "results"))
     args = ap.parse_args()
 
     out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
     log = open(os.path.join(out_dir, f"{args.name}.server.log"), "w", encoding="utf-8")
-    if args.gpu:
+    if args.gpu_auto:  # leave layer placement to the server's --fit, so models larger than VRAM spill to the CPU
+        device = []
+    elif args.gpu:
         device = ["-ngl", "99"]
     else:  # laptop CPU: high priority so Windows does not preempt spinning workers, weights read into RAM
         device = ["-t", str(args.threads), "-tb", str(args.threads), "--prio", "2", "--no-mmap"]
@@ -165,7 +168,7 @@ def main():
 
         summary = {"name": args.name, "model": os.path.basename(args.model),
                    "model_gb": os.path.getsize(args.model) / 1e9, "load_s": load_s,
-                   "device": "gpu" if args.gpu else "cpu"}
+                   "device": "gpu-fit" if args.gpu_auto else ("gpu" if args.gpu else "cpu")}
         for kind in ("gsm8k", "humaneval"):
             rs = [x for x in results if x["task"] == kind]
             if not rs:

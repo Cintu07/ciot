@@ -8,3 +8,4 @@ models/*.txt
 __pycache__/
 bench/eval/results/smoke*
 *.err
+gpu-runtime/
