@@ -288,3 +288,16 @@ The old eval processes were gone at 79/100 Qwen tasks. A quick-set chain was res
 ### Latest state: quick evaluations finished
 
 All three 60+40 runs completed. Bonsai: 59/60 and 38/40; Qwen 27B: 53/60 and 37/40; Qwen 8B: 56/60 and 38/40. All coding grades verified offline. No eval/server process remains; no new GPU load should start after the heat concern without user direction. Read COMPARISON.md and the final PROGRESS section for timing limitations. Next engineering work is the ARM PR preparation, requiring ARM hardware for validation. Do not publish an issue, PR or social post without the user approving its exact text.
+
+
+## ARM contribution preparation, 2026-10-13
+
+- Isolated current-upstream candidate: vendor/prism-contribution, revision e8fd209, existing clean patch applied. Original research checkout preserved.
+- Full repack.cpp passed ARM dotprod-only and i8mm syntax checks. CPU-only x64 build succeeded.
+- 219/219 executed PQ2_0 CPU/reference cases passed; 75/75 Q4/Q8 shared-tail cases passed. These ordinary-buffer checks do not execute the new ARM repacker.
+- Added standalone direct CPU_REPACK and native greedy-ID tools outside upstream's tests directory. Both compile on x64 and pass ARM syntax checks. Repack tool correctly skips x64; its 78 synthetic ARM cases are pending.
+- Native token checker passed same-binary control on 3 prompts x 32 IDs and a mismatch-rejection check. This validates the checker, not ARM stock/candidate equivalence. A prior server-based approach hit chat-parser errors on the requantized tiny fixture; native IDs avoid that dependency.
+- tools/validate_arm_contribution.ps1 prepares stock/candidate builds and runs direct cases, perplexity, token IDs and interleaved model benchmarks. Plan mode and x64 refusal checked; ARM pipeline pending. See docs/ARM_CONTRIBUTION.md.
+- User has the Snapdragon laptop and asked about timing. Estimate 30-60 minutes first pass with toolchain/models available, mostly compilation, with model runs in shorter blocks. Need to switch workspace/chat there or establish remote access; only GitHub SSH was configured here.
+- User says he read contribution rules and understands the design, and requested a first-principles guide to CUDA/inference terminology. Added docs/INFERENCE_FROM_FIRST_PRINCIPLES.md.
+- User requested short lowercase Twitter drafts. Added docs/POST_DRAFTS.md. No public post, issue, PR or push was made.

@@ -1,0 +1,16 @@
+{
+  "command": [
+    "C:\\Users\\pavan\\Desktop\\CIOT-V2\\build\\prism-contribution-x64\\bin\\Release\\test-backend-ops.exe",
+    "test",
+    "-b",
+    "CPU",
+    "-o",
+    "MUL_MAT",
+    "-p",
+    "type_a=(q4_0|q8_0),type_b=f32,m=16,n=(1|2|3|4|5|7|8|16),k=(128|256)",
+    "-j",
+    "1"
+  ],
+  "exit_code": 0,
+  "scope": "existing q4_0/q8_0 CPU kernels; generic remainder loop changed by patch"
+}

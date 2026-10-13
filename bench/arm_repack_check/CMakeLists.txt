@@ -1,0 +1,27 @@
+cmake_minimum_required(VERSION 3.16)
+project(ciot_arm_repack_check LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+if(NOT PRISM_SOURCE OR NOT PRISM_BUILD)
+    message(FATAL_ERROR "Set PRISM_SOURCE and PRISM_BUILD to the patched source and its existing build")
+endif()
+set(lib_dirs "${PRISM_BUILD}/ggml/src" "${PRISM_BUILD}/ggml/src/Release"
+             "${PRISM_BUILD}/ggml/src/ggml-cpu" "${PRISM_BUILD}/ggml/src/ggml-cpu/Release")
+foreach(lib ggml ggml-base ggml-cpu)
+    find_library(${lib}_library NAMES ${lib} PATHS ${lib_dirs} NO_DEFAULT_PATH REQUIRED)
+endforeach()
+add_executable(ciot-arm-repack-check main.cpp)
+target_compile_definitions(ciot-arm-repack-check PRIVATE GGML_SHARED)
+target_include_directories(ciot-arm-repack-check PRIVATE "${PRISM_SOURCE}/include" "${PRISM_SOURCE}/ggml/include"
+    "${PRISM_SOURCE}/ggml/src" "${PRISM_SOURCE}/ggml/src/ggml-cpu")
+target_link_libraries(ciot-arm-repack-check PRIVATE ${ggml_library} ${ggml-cpu_library} ${ggml-base_library})
+find_library(llama_library NAMES llama PATHS "${PRISM_BUILD}/src" "${PRISM_BUILD}/src/Release" NO_DEFAULT_PATH REQUIRED)
+add_executable(ciot-token-check token_ids.cpp)
+target_compile_definitions(ciot-token-check PRIVATE LLAMA_SHARED GGML_SHARED)
+target_include_directories(ciot-token-check PRIVATE "${PRISM_SOURCE}/include" "${PRISM_SOURCE}/ggml/include")
+target_link_libraries(ciot-token-check PRIVATE ${llama_library} ${ggml_library} ${ggml-base_library})
+file(GLOB runtime_dlls "${PRISM_BUILD}/bin/*.dll" "${PRISM_BUILD}/bin/Release/*.dll")
+if(runtime_dlls)
+    add_custom_target(ciot-runtime-copy ALL COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${runtime_dlls} $<TARGET_FILE_DIR:ciot-token-check>
+        DEPENDS ciot-arm-repack-check ciot-token-check COMMAND_EXPAND_LISTS)
+endif()

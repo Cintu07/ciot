@@ -1,0 +1,16 @@
+{
+  "command": [
+    "C:\\Users\\pavan\\Desktop\\CIOT-V2\\build\\prism-contribution-x64\\bin\\Release\\test-backend-ops.exe",
+    "test",
+    "-b",
+    "CPU",
+    "-o",
+    "MUL_MAT",
+    "-p",
+    "type_a=pq2_0",
+    "-j",
+    "1"
+  ],
+  "exit_code": 0,
+  "scope": "x64 CPU vs reference; does not execute ARM repack"
+}

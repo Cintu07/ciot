@@ -218,3 +218,16 @@ All three models now have 100 answers: 60 GSM8K and 40 HumanEval.
 - On shared math IDs, Bonsai vs Qwen 27B is 6-0 on disagreements; Bonsai vs Qwen 8B is 3-0. Coding vs Qwen 8B is 1-1, with 37 shared passes. These are exploratory, small-subset comparisons.
 - The user asked about 85 C GPU temperature near the end. Driver reported 87 C target, with no active thermal slowdown at inspection. Finished the remaining few tasks and the server exited; utilization reached 0% and temperature fell to 79 C. No further GPU run launched.
 - Report: bench/eval/results-rtx/COMPARISON.md, generated from saved task IDs. Environment and power notes are alongside it. GPU accuracy uses PrismML's official runtime, separate from CIOT ARM kernel measurements.
+
+
+## ARM contribution preparation, 2026-10-13
+
+- Isolated current-upstream candidate: vendor/prism-contribution, revision e8fd209, existing clean patch applied. Original research checkout preserved.
+- Full repack.cpp passed ARM dotprod-only and i8mm syntax checks. CPU-only x64 build succeeded.
+- 219/219 executed PQ2_0 CPU/reference cases passed; 75/75 Q4/Q8 shared-tail cases passed. These ordinary-buffer checks do not execute the new ARM repacker.
+- Added standalone direct CPU_REPACK and native greedy-ID tools outside upstream's tests directory. Both compile on x64 and pass ARM syntax checks. Repack tool correctly skips x64; its 78 synthetic ARM cases are pending.
+- Native token checker passed same-binary control on 3 prompts x 32 IDs and a mismatch-rejection check. This validates the checker, not ARM stock/candidate equivalence. A prior server-based approach hit chat-parser errors on the requantized tiny fixture; native IDs avoid that dependency.
+- tools/validate_arm_contribution.ps1 prepares stock/candidate builds and runs direct cases, perplexity, token IDs and interleaved model benchmarks. Plan mode and x64 refusal checked; ARM pipeline pending. See docs/ARM_CONTRIBUTION.md.
+- User has the Snapdragon laptop and asked about timing. Estimate 30-60 minutes first pass with toolchain/models available, mostly compilation, with model runs in shorter blocks. Need to switch workspace/chat there or establish remote access; only GitHub SSH was configured here.
+- User says he read contribution rules and understands the design, and requested a first-principles guide to CUDA/inference terminology. Added docs/INFERENCE_FROM_FIRST_PRINCIPLES.md.
+- User requested short lowercase Twitter drafts. Added docs/POST_DRAFTS.md. No public post, issue, PR or push was made.

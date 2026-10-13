@@ -1,0 +1,36 @@
+{
+  "all_match": true,
+  "prompts": 3,
+  "matches": [
+    true,
+    true,
+    true
+  ],
+  "compared_generated_tokens": [
+    32,
+    32,
+    32
+  ],
+  "scope": "Same x64 binary compared to itself; validates native token checker, not ARM candidate correctness",
+  "model": "Qwen3-0.6B-PQ2_0.gguf",
+  "model_bytes": 250821280,
+  "tool_sha256": {
+    "stock": "65f59d75a6ef39e1129c4f702eefb8515010ddc21d8a53ba4badc5679bed8719",
+    "candidate": "65f59d75a6ef39e1129c4f702eefb8515010ddc21d8a53ba4badc5679bed8719"
+  },
+  "self_test_only": true,
+  "runtime_sha256": {
+    "stock": {
+      "llama.dll": "7f38fa311dd645c24604f441fee2813591cda8960bac831fd96f8667137f5941",
+      "ggml.dll": "4913ae60951c14dfe9d6adb8343c7cdc2ac8f4b8da3e59b21361c4c1401ae062",
+      "ggml-base.dll": "6c2616e302447ec0fd4e5ece101a6ae1ed25ce204053fc02bf26fa0a4584dec5",
+      "ggml-cpu.dll": "6a20dc3d2a339378b857d62105a51c7c32ed8bff0f3eceabc91a4a4d41777783"
+    },
+    "candidate": {
+      "llama.dll": "7f38fa311dd645c24604f441fee2813591cda8960bac831fd96f8667137f5941",
+      "ggml.dll": "4913ae60951c14dfe9d6adb8343c7cdc2ac8f4b8da3e59b21361c4c1401ae062",
+      "ggml-base.dll": "6c2616e302447ec0fd4e5ece101a6ae1ed25ce204053fc02bf26fa0a4584dec5",
+      "ggml-cpu.dll": "6a20dc3d2a339378b857d62105a51c7c32ed8bff0f3eceabc91a4a4d41777783"
+    }
+  }
+}
