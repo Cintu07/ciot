@@ -5,7 +5,7 @@
  *                         stock           ciot
  * prefill                 8.4             31.7 tok/s
  * decode                  6.5              9.7 tok/s
- * code edit speculation   8.88            14.10 tok/s
+ * code edit, ciot greedy -> speculative: 8.88 -> 14.10 tok/s
  *
  * matvec: 107 gb/s | measured dram: 110 to 115 gb/s
  * code edit check: 306 tokens, 0 token mismatches
