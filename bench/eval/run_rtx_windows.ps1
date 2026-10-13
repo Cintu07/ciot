@@ -27,14 +27,17 @@ $base    = "https://github.com/PrismML-Eng/llama.cpp/releases/download/$tag"
 $smi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
 if (-not $smi) { throw "nvidia-smi not found: install the NVIDIA driver first" }
 & nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
+# PATH first, then per-user installs (a fresh winget install is not on PATH until a new terminal)
 $python = $null
-foreach ($c in @("py -3", "python")) {
+$candidates = @((Get-Command python -ErrorAction SilentlyContinue).Source) +
+              @(Get-ChildItem "$env:LOCALAPPDATA\Programs\Python\Python3*\python.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | ForEach-Object FullName)
+foreach ($c in $candidates | Where-Object { $_ }) {
     try {
-        $v = Invoke-Expression "$c --version" 2>$null
+        $v = & $c --version 2>$null
         if ($v -match "Python 3\.(\d+)" -and [int]$Matches[1] -ge 8) { $python = $c; break }
     } catch {}
 }
-if (-not $python) { throw "Python 3.8+ not found: install it from python.org (tick 'Add to PATH') or run: winget install Python.Python.3.12" }
+if (-not $python) { throw "Python 3.8+ not found: run  winget install Python.Python.3.12" }
 Write-Host "python: $python"
 
 # 2. runtime (official PrismML Windows CUDA build, pinned)
@@ -68,19 +71,23 @@ foreach ($m in $list) {
     if (Test-Path (Join-Path $out "$($m.name).summary.json")) { Write-Host "$($m.name): already done"; continue }
     $path = Join-Path $models $m.file
     $url  = "https://huggingface.co/$($m.repo)/resolve/main/$($m.file)"
+    # Hugging Face reports the real file size in x-linked-size; a complete file is not downloaded again
+    $head = & curl.exe -sI $url
+    $size = [int64](($head | Select-String -Pattern '^x-linked-size:\s*(\d+)' | Select-Object -First 1).Matches.Groups[1].Value)
     for ($try = 1; $try -le 20; $try++) {
+        if ((Test-Path $path) -and $size -gt 0 -and (Get-Item $path).Length -eq $size) { break }
         & curl.exe -L --fail --retry 5 -C - -o $path $url
-        if ($LASTEXITCODE -eq 0) { break }
-        Write-Host "download interrupted (curl exit $LASTEXITCODE), resuming..."
-        Start-Sleep -Seconds 5
+        Write-Host "download stopped (curl exit $LASTEXITCODE), checking size and resuming if needed..."
+        Start-Sleep -Seconds 3
     }
-    if ($LASTEXITCODE -ne 0) { throw "could not download $($m.file)" }
+    if (-not ((Test-Path $path) -and (Get-Item $path).Length -eq $size)) { throw "could not download $($m.file)" }
+    Write-Host "$($m.file): $([math]::Round($size / 1GB, 2)) GB ready"
 
     Write-Host "=== $($m.name)"
     $argsList = @("bench\eval\run_eval.py", "--model", $path, "--name", $m.name, "--gsm", $Gsm, "--he", $He,
                   "--gpu-auto", "--server", $server.FullName, "--out", $out)
     Push-Location $root
-    if ($python -eq "py -3") { & py -3 -u @argsList } else { & python -u @argsList }
+    & $python -u @argsList
     $code = $LASTEXITCODE
     Pop-Location
     if ($code -ne 0) { throw "eval failed for $($m.name), see $out\$($m.name).server.log" }
