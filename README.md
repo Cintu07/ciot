@@ -66,7 +66,9 @@ v1/           the original ciot engine, untouched
 
 correct against the official runtime: perplexity, greedy output and integer exact kernel tests. only tested on one machine so far, a snapdragon x x126100.
 
-the comparison against qwen3.8 27b at 2 bit and qwen3-8b at the same memory is still running. a partial run of bonsai on the laptop got 58 of 60 on gsm8k and 19 of 19 on the first humaneval problems.
+the gpu comparison is running on an rtx 5060 with 8 gb. on the first 60 gsm8k problems, bonsai got 59 and qwen3.8 27b at 2 bit got 53. bonsai got 38 of the first 40 humaneval problems. the qwen coding run stopped at 19 problems and is now resuming from its saved answers; qwen3-8b runs after it.
+
+these gpu runs use prismml's official runtime. they compare model choices within the same gpu capacity, with different file sizes and cpu offload. they do not measure the ciot arm kernels. the resumed session started on battery, so its timings need to be kept separate from the earlier plugged-in run. saved answers and the current paired comparison are in bench/eval/results-rtx.
 
 decode is 9.7 tok/s while the kernels alone would allow about 15. the rest is runtime overhead, and that is the next thing to go after.
 

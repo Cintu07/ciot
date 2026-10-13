@@ -187,3 +187,16 @@ Bonsai 2 27B with T2P in the runtime (prio 2, mmap off):
 - Proposed fix (not applied yet):
   - Request the ring for ngram types too, capped. Bonsai's recurrent state is ~150 MB per ring slot, and ngram drafts default to 48–64 tokens, so an uncapped ring would need ~7 GB.
   - Use short ngram drafts (2–3 tokens, which matches the 4-token SMMLA verify tile).
+
+## 2026-10-13: evaluation resumed from Claude handoff
+
+- Confirmed no evaluation processes remained. Qwen 27B checkpoint contained 79/100 tasks (60 GSM8K, 19 HumanEval).
+- Added validated --resume support: check task order/IDs and fingerprints on new records, append rather than overwrite, retain old timings. Legacy records have no fingerprint, so only their IDs/order can be validated.
+- Added power/session labels and a paired comparison generator using matching task IDs. The runner refuses to silently skip summaries with different task counts.
+- Regraded all saved HumanEval answers offline with Python 3.13: no disagreements for Bonsai or Qwen 27B.
+- Completed saved GSM8K subset: Bonsai 59/60, Qwen 27B 53/60. Paired outcomes: 53 both correct, 6 Bonsai only, 0 Qwen only, 1 both wrong.
+- Inspected failures: Qwen GSM8K/2 is empty (one generated token), four Qwen math failures hit the 400-token cap; Bonsai GSM8K/37 and HumanEval/32 also hit their caps. These scores describe capped generation, not unlimited solving ability.
+- Restarted quick evaluation chain (60 + 40), preserving 79 Qwen records. Output: bench/eval/results-rtx/run3_resume.log and run3_resume.err. Qwen 8B is queued after Qwen 27B.
+- Current driver reports 610.74; historical handoff listed 581.95. Laptop reports battery at restart. Avoid treating combined historical/new times as a controlled speed experiment.
+- GPU runs use the official PrismML runtime, not CIOT's ARM kernels. Model files are 5.95, 7.27 and 6.73 decimal GB; "same 8 GB GPU capacity" is accurate, "equal memory" is approximate.
+- No issue, PR, or social post published. ARM code remains unmodified on this x86 machine.

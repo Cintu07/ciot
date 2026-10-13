@@ -72,7 +72,14 @@ New-Item -ItemType Directory -Force $models, $out | Out-Null
 
 foreach ($m in $list) {
     if ($Only -and $m.name -ne $Only) { continue }
-    if (Test-Path (Join-Path $out "$($m.name).summary.json")) { Write-Host "$($m.name): already done"; continue }
+    $summaryPath = Join-Path $out "$($m.name).summary.json"
+    if (Test-Path $summaryPath) {
+        $saved = Get-Content $summaryPath -Raw | ConvertFrom-Json
+        if ($saved.gsm8k.n -ne $Gsm -or $saved.humaneval.n -ne $He) {
+            throw "Existing results for $($m.name) use different task counts. Preserve them and use a separate output directory for another task set."
+        }
+        Write-Host "$($m.name): already done"; continue
+    }
     $path = Join-Path $models $m.file
     $url  = "https://huggingface.co/$($m.repo)/resolve/main/$($m.file)"
     # Hugging Face reports the real file size in x-linked-size; a complete file is not downloaded again
@@ -89,13 +96,17 @@ foreach ($m in $list) {
 
     Write-Host "=== $($m.name)"
     $placement = if ($m.whole) { "--gpu" } else { "--gpu-auto" }
-    $argsList = @("bench\eval\run_eval.py", "--model", $path, "--name", $m.name, "--gsm", $Gsm, "--he", $He,
+    $battery = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1
+    $powerState = if (-not $battery) { "unknown" } elseif ($battery.BatteryStatus -eq 2) { "ac" } elseif ($battery.BatteryStatus -eq 1) { "battery" } else { "unknown" }
+    $argsList = @("bench\eval\run_eval.py", "--model", $path, "--name", $m.name, "--gsm", $Gsm, "--he", $He, "--resume", "--power-state", $powerState,
                   $placement, "--server", $server.FullName, "--out", $out, "--server-args", "-t $CpuThreads -tb $CpuThreads")
     Push-Location $root
     & $python -u @argsList
     $code = $LASTEXITCODE
     Pop-Location
     if ($code -ne 0) { throw "eval failed for $($m.name), see $out\$($m.name).server.log" }
+    & $python (Join-Path $PSScriptRoot "compare_results.py") --results $out --output (Join-Path $out "COMPARISON.md")
+    if ($LASTEXITCODE -ne 0) { throw "comparison report failed" }
     if ($DeleteModels) { Remove-Item $path }
 }
 

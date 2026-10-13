@@ -17,6 +17,8 @@ import sys
 import tempfile
 import time
 import urllib.request
+import hashlib
+import datetime
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
@@ -32,6 +34,36 @@ def chat(user):
 def load(name, n):
     with open(os.path.join(HERE, "data", name), encoding="utf-8") as f:
         return [json.loads(line) for line in f][:n]
+
+
+def resume_results(path, tasks, fingerprint):
+    if not os.path.exists(path):
+        return []
+    with open(path, encoding="utf-8") as f:
+        results = [json.loads(line) for line in f if line.strip()]
+    if len(results) > len(tasks):
+        raise ValueError("checkpoint has more tasks than requested")
+    for idx, rec in enumerate(results):
+        kind, item = tasks[idx]
+        if (rec["task"], rec["id"]) != (kind, item.get("task_id", idx)):
+            raise ValueError(f"checkpoint task mismatch at {idx}; use a separate output directory")
+        if rec.get("eval_fingerprint", fingerprint) != fingerprint:
+            raise ValueError("checkpoint settings changed; use a separate output directory")
+    return results
+
+
+def power_state(fallback):
+    if os.name != "nt":
+        return fallback
+    import ctypes
+    class Status(ctypes.Structure):
+        _fields_ = [("ac", ctypes.c_ubyte), ("flag", ctypes.c_ubyte),
+                    ("percent", ctypes.c_ubyte), ("reserved", ctypes.c_ubyte),
+                    ("life", ctypes.c_uint32), ("full_life", ctypes.c_uint32)]
+    status = Status()
+    if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+        return {0: "battery", 1: "ac"}.get(status.ac, "unknown")
+    return fallback
 
 
 def post(port, payload, timeout=1800):
@@ -112,11 +144,23 @@ def main():
     ap.add_argument("--gpu", action="store_true", help="offload all layers to the GPU instead of the laptop CPU settings")
     ap.add_argument("--gpu-auto", action="store_true", help="let the server fit layers into VRAM (for GPUs smaller than the model)")
     ap.add_argument("--out", default=os.path.join(HERE, "results"))
+    ap.add_argument("--resume", action="store_true", help="append remaining tasks to a validated checkpoint")
+    ap.add_argument("--power-state", default="unknown", choices=["ac", "battery", "unknown"])
     args = ap.parse_args()
+
+    tasks = [("gsm8k", it) for it in load("gsm8k_test.jsonl", args.gsm)] + \
+            [("humaneval", it) for it in load("humaneval.jsonl", args.he)]
+    fingerprint = hashlib.sha256(json.dumps({"tasks": tasks, "chat": chat(""),
+        "model": os.path.basename(args.model), "model_bytes": os.path.getsize(args.model),
+        "limits": [400, 512], "temperature": 0, "stop": STOP}, sort_keys=True).encode()).hexdigest()
+    partial_path = os.path.join(args.out, f"{args.name}.partial.jsonl")
+    results = resume_results(partial_path, tasks, fingerprint) if args.resume else []
+    resumed_n = len(results)
+    session = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
     out_dir = args.out
     os.makedirs(out_dir, exist_ok=True)
-    log = open(os.path.join(out_dir, f"{args.name}.server.log"), "w", encoding="utf-8")
+    log = open(os.path.join(out_dir, f"{args.name}.server.log"), "a" if args.resume else "w", encoding="utf-8")
     if args.gpu_auto:  # leave layer placement to the server's --fit, so models larger than VRAM spill to the CPU
         device = []
     elif args.gpu:
@@ -130,11 +174,10 @@ def main():
         load_s = wait_ready(args.port, proc)
         print(f"[{args.name}] loaded in {load_s:.0f}s", flush=True)
 
-        tasks = [("gsm8k", it) for it in load("gsm8k_test.jsonl", args.gsm)] + \
-                [("humaneval", it) for it in load("humaneval.jsonl", args.he)]
-        results = []
-        partial = open(os.path.join(out_dir, f"{args.name}.partial.jsonl"), "w", encoding="utf-8", newline="\n")
-        for idx, (kind, item) in enumerate(tasks):
+        print(f"[{args.name}] resuming at {resumed_n}/{len(tasks)}; power={args.power_state}", flush=True)
+        partial = open(partial_path, "a" if args.resume else "w", encoding="utf-8", newline="\n")
+        for idx in range(resumed_n, len(tasks)):
+            kind, item = tasks[idx]
             if kind == "gsm8k":
                 prompt = chat(f"{item['question']}\n\nSolve this step by step, briefly. "
                               "End with a final line of the form 'Answer: <number>'.")
@@ -145,6 +188,7 @@ def main():
                               f"```python\n{item['prompt']}```")
                 n_predict = 512
             t0 = time.perf_counter()
+            start_power = power_state(args.power_state)
             r = post(args.port, {"prompt": prompt, "n_predict": n_predict, "temperature": 0, "top_k": 1,
                                  "cache_prompt": False, "stop": STOP})
             wall = time.perf_counter() - t0
@@ -152,6 +196,8 @@ def main():
             ok = grade_gsm(item, text) if kind == "gsm8k" else grade_he(item, text)
             tm = r.get("timings", {})
             rec = {"task": kind, "id": item.get("task_id", idx), "correct": ok, "wall_s": wall,
+                   "eval_fingerprint": fingerprint, "session": session,
+                   "power_state": start_power if start_power == power_state(args.power_state) else "changed",
                    "prompt_n": tm.get("prompt_n"), "prompt_ms": tm.get("prompt_ms"),
                    "gen_n": tm.get("predicted_n"), "gen_ms": tm.get("predicted_ms"),
                    "truncated": r.get("truncated", False) or tm.get("predicted_n", 0) >= n_predict, "text": text}
@@ -168,7 +214,9 @@ def main():
 
         summary = {"name": args.name, "model": os.path.basename(args.model),
                    "model_gb": os.path.getsize(args.model) / 1e9, "load_s": load_s,
-                   "device": "gpu-fit" if args.gpu_auto else ("gpu" if args.gpu else "cpu")}
+                   "device": "gpu-fit" if args.gpu_auto else ("gpu" if args.gpu else "cpu"),
+                   "resumed_tasks": resumed_n, "eval_fingerprint": fingerprint,
+                   "power_states": sorted({x.get("power_state", "unrecorded") for x in results})}
         for kind in ("gsm8k", "humaneval"):
             rs = [x for x in results if x["task"] == kind]
             if not rs:
