@@ -11,6 +11,8 @@
 param(
     [int]$Gsm = 250,
     [int]$He = 164,
+    [string]$Only = "",   # run a single model by name, e.g. -Only bonsai2-27b-ptq1_0
+    [int]$CpuThreads = 4, # few CPU threads: the GPU does the work, the CPU stays cool
     [switch]$DeleteModels
 )
 $ErrorActionPreference = "Stop"
@@ -61,13 +63,15 @@ Write-Host "server: $($server.FullName)"
 
 # 3. models, resumable
 $list = @(
-    @{ name = "bonsai2-27b-ptq1_0";  repo = "prism-ml/Ternary-Bonsai-2-27B-gguf"; file = "Ternary-Bonsai-2-27B-PTQ1_0.gguf" },
-    @{ name = "qwen3.8-27b-iq2_xxs"; repo = "unsloth/Qwen3.8-27B-GGUF";           file = "Qwen3.8-27B-UD-IQ2_XXS.gguf" },
-    @{ name = "qwen3-8b-q6_k";       repo = "Qwen/Qwen3-8B-GGUF";                 file = "Qwen3-8B-Q6_K.gguf" }
+    # whole = $true: every layer on the GPU (fits in 8 GB); otherwise the server's --fit decides
+    @{ name = "bonsai2-27b-ptq1_0";  repo = "prism-ml/Ternary-Bonsai-2-27B-gguf"; file = "Ternary-Bonsai-2-27B-PTQ1_0.gguf"; whole = $true },
+    @{ name = "qwen3.8-27b-iq2_xxs"; repo = "unsloth/Qwen3.8-27B-GGUF";           file = "Qwen3.8-27B-UD-IQ2_XXS.gguf";      whole = $false },
+    @{ name = "qwen3-8b-q6_k";       repo = "Qwen/Qwen3-8B-GGUF";                 file = "Qwen3-8B-Q6_K.gguf";               whole = $false }
 )
 New-Item -ItemType Directory -Force $models, $out | Out-Null
 
 foreach ($m in $list) {
+    if ($Only -and $m.name -ne $Only) { continue }
     if (Test-Path (Join-Path $out "$($m.name).summary.json")) { Write-Host "$($m.name): already done"; continue }
     $path = Join-Path $models $m.file
     $url  = "https://huggingface.co/$($m.repo)/resolve/main/$($m.file)"
@@ -84,8 +88,9 @@ foreach ($m in $list) {
     Write-Host "$($m.file): $([math]::Round($size / 1GB, 2)) GB ready"
 
     Write-Host "=== $($m.name)"
+    $placement = if ($m.whole) { "--gpu" } else { "--gpu-auto" }
     $argsList = @("bench\eval\run_eval.py", "--model", $path, "--name", $m.name, "--gsm", $Gsm, "--he", $He,
-                  "--gpu-auto", "--server", $server.FullName, "--out", $out)
+                  $placement, "--server", $server.FullName, "--out", $out, "--server-args", "-t $CpuThreads -tb $CpuThreads")
     Push-Location $root
     & $python -u @argsList
     $code = $LASTEXITCODE
@@ -103,7 +108,7 @@ foreach ($f in Get-ChildItem $out -Filter *.summary.json) {
     $g = $r.gsm8k; $h = $r.humaneval
     $per = [math]::Round(($g.gen_tokens + $h.gen_tokens) / [math]::Max(1, $g.n + $h.n))
     Write-Host ("| {0} | {1:N2} | {2}/{3} ({4:N1}%) | {5}/{6} ({7:N1}%) | {8} | {9:N1} |" -f $r.name, $r.model_gb,
-        $g.correct, $g.n, 100 * $g.accuracy, $h.correct, $h.n, 100 * $h.accuracy, $per, $g.decode_tok_s)
+        $g.correct, $g.n, (100 * $g.accuracy), $h.correct, $h.n, (100 * $h.accuracy), $per, $g.decode_tok_s)
 }
 Write-Host ""
 Write-Host "results: $out"
