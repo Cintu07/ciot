@@ -12,5 +12,8 @@
     "1"
   ],
   "exit_code": 0,
-  "scope": "existing q4_0/q8_0 CPU kernels; generic remainder loop changed by patch"
+  "scope": "existing q4_0/q8_0 CPU kernels; generic remainder loop changed by patch",
+  "raw_log_sha256": "928ee884f2a4ebf354f930ece91dc13a162614dd27e94a9ad6ee101790b8fbe9",
+  "published_output": "x64-tail-regression.txt",
+  "output_normalization": "ANSI color codes and trailing spaces removed; raw log retained locally"
 }

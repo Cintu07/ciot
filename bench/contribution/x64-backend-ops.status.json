@@ -12,5 +12,8 @@
     "1"
   ],
   "exit_code": 0,
-  "scope": "x64 CPU vs reference; does not execute ARM repack"
+  "scope": "x64 CPU vs reference; does not execute ARM repack",
+  "raw_log_sha256": "f2297f049f833dedd7a5dfeff8dd981d6a27f0d398432f498d9d1bb80bd1e7a5",
+  "published_output": "x64-backend-ops.txt",
+  "output_normalization": "ANSI color codes and trailing spaces removed; raw log retained locally"
 }

@@ -19,7 +19,7 @@ Checks completed on this x64 laptop:
 
 These x64 tests do not execute ARM instructions or the new ARM repacked buffer. Cross-compilation checks syntax, not execution or speed. The standard backend operator tests allocate ordinary CPU buffers; passing them alone does not validate this repacker.
 
-Recorded evidence: bench/contribution/preparation.json and the two backend status JSON files. Raw native test output is in the adjacent .log files.
+Recorded evidence: bench/contribution/preparation.json and the two backend status JSON files. Readable native test output is in the adjacent .txt files, with ANSI colors and trailing spaces removed. Raw .log files remain locally; their hashes are recorded in the status files.
 
 Historical measurements, which still need reproduction on the clean candidate:
 
