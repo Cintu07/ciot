@@ -1,0 +1,38 @@
+{
+  "name": "qwen3.8-27b-iq2_xxs",
+  "model": "Qwen3.8-27B-UD-IQ2_XXS.gguf",
+  "model_gb": 7.266070528,
+  "load_s": 14.162514925003052,
+  "device": "gpu-fit",
+  "resumed_tasks": 79,
+  "eval_fingerprint": "7530eb8d7447aaf3e283554b30bd1a5208425a471768ab015de1ac7ac8401b8c",
+  "power_states": [
+    "unrecorded",
+    "mixed-session"
+  ],
+  "gsm8k": {
+    "n": 60,
+    "correct": 53,
+    "accuracy": 0.8833333333333333,
+    "wall_s": 2700.572496700006,
+    "s_per_task": 45.00954161166677,
+    "s_per_correct": 50.95419805094351,
+    "prompt_tokens": 5755,
+    "gen_tokens": 12253,
+    "decode_tok_s": 4.697651407166201,
+    "truncated": 4
+  },
+  "humaneval": {
+    "n": 40,
+    "correct": 37,
+    "accuracy": 0.925,
+    "wall_s": 1297.6917835999861,
+    "s_per_task": 32.442294589999655,
+    "s_per_correct": 35.072750908107736,
+    "prompt_tokens": 5999,
+    "gen_tokens": 6575,
+    "decode_tok_s": 5.306856618804677,
+    "truncated": 1
+  },
+  "power_note": "21 resumed tasks span battery-to-AC transition; original per-record battery label was measured only at startup."
+}

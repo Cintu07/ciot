@@ -1,0 +1,36 @@
+{
+  "name": "qwen3-8b-q6_k",
+  "model": "Qwen3-8B-Q6_K.gguf",
+  "model_gb": 6.72589904,
+  "load_s": 8.117686033248901,
+  "device": "gpu-fit",
+  "resumed_tasks": 0,
+  "eval_fingerprint": "5a061a14f2cdc5626ecf51f17263a8e5c6311256bc767255bb6c5e46f8f51810",
+  "power_states": [
+    "ac"
+  ],
+  "gsm8k": {
+    "n": 60,
+    "correct": 56,
+    "accuracy": 0.9333333333333333,
+    "wall_s": 397.32471299999884,
+    "s_per_task": 6.622078549999981,
+    "s_per_correct": 7.095084160714265,
+    "prompt_tokens": 5704,
+    "gen_tokens": 8483,
+    "decode_tok_s": 21.971303359160792,
+    "truncated": 0
+  },
+  "humaneval": {
+    "n": 40,
+    "correct": 38,
+    "accuracy": 0.95,
+    "wall_s": 308.88985520000097,
+    "s_per_task": 7.7222463800000245,
+    "s_per_correct": 8.128680400000025,
+    "prompt_tokens": 5695,
+    "gen_tokens": 6188,
+    "decode_tok_s": 20.647712260342267,
+    "truncated": 0
+  }
+}

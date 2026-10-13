@@ -25,15 +25,18 @@ def read_results(folder):
 
 def report(folder):
     models = read_results(folder)
+    counts = {task: max((sum(key[0] == task for key in rows) for rows in models.values()), default=0)
+              for task in ("gsm8k", "humaneval")}
     lines = ["# RTX 5060 saved-answer comparison", "",
         "Official PrismML CUDA runtime; this evaluates model choices on an 8 GB GPU. "
         "CIOT ARM kernel speedups are a separate experiment.", "",
-        "First 60 GSM8K and first 40 HumanEval tasks, greedy, thinking pre-closed. "
+        f"Saved subset: up to the first {counts['gsm8k']} GSM8K and first {counts['humaneval']} HumanEval tasks, greedy, thinking pre-closed. "
         "This is a small deterministic subset, not a full benchmark score.", "",
         "File sizes are not equal: Bonsai 5.95 GB, Qwen 27B 7.27 GB, Qwen 8B 6.73 GB. "
         "The constraint is the same GPU capacity; CPU offload differs.", "",
         "Timing includes historical and resumed sessions. Historical power is unrecorded in "
-        "answer files; the handoff says Bonsai ran on AC. The resumed run records power. "
+        "answer files; the handoff says Bonsai ran on AC. The Qwen 27B resumed session "
+        "crossed from battery to AC; Qwen 8B records power per task. "
         "Do not treat mixed-power timing ratios as a controlled speed comparison.", "",
         "| model | task | correct | mean generated tokens | seconds/task | decode tok/s | power labels |",
         "|---|---|---|---|---|---|---|"]
@@ -46,7 +49,8 @@ def report(folder):
             gen = sum(r.get("gen_n") or 0 for r in rs)
             ms = sum(r.get("gen_ms") or 0 for r in rs)
             speed = f"{gen * 1000 / ms:.1f}" if ms else "unknown"
-            power = ", ".join(sorted({r.get("power_state", "unrecorded") for r in rs}))
+            power = ", ".join(sorted({"mixed-session" if r.get("session_power_change") else
+                r.get("power_state", "unrecorded") for r in rs}))
             lines.append(f"| {name} | {task} | {sum(r['correct'] for r in rs)}/{n} | "
                 f"{gen/n:.1f} | {sum(r['wall_s'] for r in rs)/n:.2f} | {speed} | {power} |")
     baseline = models.get("bonsai2-27b-ptq1_0", {})

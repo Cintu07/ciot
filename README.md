@@ -8,7 +8,7 @@ a 27 billion parameter ternary model running on a laptop cpu. no gpu. built by [
 
 prismml ships a llama.cpp fork that runs it, but that fork is built for cuda and metal. on an arm laptop cpu the 1.75 bit file falls back to a plain c loop, and the 2 bit file gets a basic neon kernel. so i wrote new kernels for the matmuls, plugged them into their runtime, and checked that the output stays bit identical.
 
-on the same laptop, same file, same settings:
+on the same laptop and settings, using the file formats listed below (ciot uses the 2 bit file):
 
 | runtime | prefill tok/s | decode tok/s |
 |---|---|---|
@@ -66,9 +66,17 @@ v1/           the original ciot engine, untouched
 
 correct against the official runtime: perplexity, greedy output and integer exact kernel tests. only tested on one machine so far, a snapdragon x x126100.
 
-the gpu comparison is running on an rtx 5060 with 8 gb. on the first 60 gsm8k problems, bonsai got 59 and qwen3.8 27b at 2 bit got 53. bonsai got 38 of the first 40 humaneval problems. the qwen coding run stopped at 19 problems and is now resuming from its saved answers; qwen3-8b runs after it.
+the quick gpu comparison is complete on an rtx 5060 with 8 gb, using prismml's official cuda runtime:
 
-these gpu runs use prismml's official runtime. they compare model choices within the same gpu capacity, with different file sizes and cpu offload. they do not measure the ciot arm kernels. the resumed session started on battery, so its timings need to be kept separate from the earlier plugged-in run. saved answers and the current paired comparison are in bench/eval/results-rtx.
+| model | file gb | gsm8k (first 60) | humaneval (first 40) |
+|---|---|---|---|
+| bonsai 2 27b, ternary ptq1_0 | 5.95 | 59/60 | 38/40 |
+| qwen3.8 27b, iq2_xxs | 7.27 | 53/60 | 37/40 |
+| qwen3 8b, q6_k | 6.73 | 56/60 | 38/40 |
+
+on these math problems, bonsai solved every problem either qwen solved, plus six over the 27b and three over the 8b. coding tied the 8b. this is a small subset with fixed output limits, not a full benchmark score.
+
+these gpu runs compare model choices within the same gpu capacity, with different file sizes and cpu offload. they do not measure the ciot arm kernels. qwen 27b spans historical and resumed sessions, including a battery-to-ac transition; qwen 8b recorded ac for every task. timings are descriptive, not a controlled speed comparison. the saved answers and paired report are in [bench/eval/results-rtx/COMPARISON.md](bench/eval/results-rtx/COMPARISON.md).
 
 decode is 9.7 tok/s while the kernels alone would allow about 15. the rest is runtime overhead, and that is the next thing to go after.
 

@@ -200,3 +200,21 @@ Bonsai 2 27B with T2P in the runtime (prio 2, mmap off):
 - Current driver reports 610.74; historical handoff listed 581.95. Laptop reports battery at restart. Avoid treating combined historical/new times as a controlled speed experiment.
 - GPU runs use the official PrismML runtime, not CIOT's ARM kernels. Model files are 5.95, 7.27 and 6.73 decimal GB; "same 8 GB GPU capacity" is accurate, "equal memory" is approximate.
 - No issue, PR, or social post published. ARM code remains unmodified on this x86 machine.
+
+
+### Quick GPU comparison completed
+
+All three models now have 100 answers: 60 GSM8K and 40 HumanEval.
+
+| model | file GB | GSM8K | HumanEval | seconds/math task | seconds/code task |
+|---|---|---|---|---|---|
+| Bonsai PTQ1_0 | 5.95 | 59/60 | 38/40 | 5.64 | 4.84 |
+| Qwen 27B IQ2_XXS | 7.27 | 53/60 | 37/40 | 45.01 | 32.44 |
+| Qwen 8B Q6_K | 6.73 | 56/60 | 38/40 | 6.62 | 7.72 |
+
+- All 40 HumanEval answers for every model were regraded offline; no disagreements.
+- Every Qwen 8B task recorded AC at start and end. The Qwen 27B process loaded an earlier startup-only power recorder before per-task recording was added. Its 21 resumed records retain that original label and explicitly carry session_power_change=true. The summary marks this session mixed-power.
+- Windows reported AC at approximately task 92 of Qwen 27B; power_transition.json records the observation. Timing ratios remain uncontrolled: mixed power, different sessions, driver and thermal conditions. No general 8x speed claim is warranted from this combined run.
+- On shared math IDs, Bonsai vs Qwen 27B is 6-0 on disagreements; Bonsai vs Qwen 8B is 3-0. Coding vs Qwen 8B is 1-1, with 37 shared passes. These are exploratory, small-subset comparisons.
+- The user asked about 85 C GPU temperature near the end. Driver reported 87 C target, with no active thermal slowdown at inspection. Finished the remaining few tasks and the server exited; utilization reached 0% and temperature fell to 79 C. No further GPU run launched.
+- Report: bench/eval/results-rtx/COMPARISON.md, generated from saved task IDs. Environment and power notes are alongside it. GPU accuracy uses PrismML's official runtime, separate from CIOT ARM kernel measurements.

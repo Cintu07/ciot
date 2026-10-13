@@ -1,0 +1,6 @@
+{
+  "observed_utc": "2026-10-13T14:46:57.311944+00:00",
+  "battery_status": 2,
+  "completed_qwen27_tasks_at_observation": 92,
+  "note": "Resumed Qwen 27B process records startup power only. Session crossed from battery to AC. Mark its new records mixed-session; do not infer per-task AC from those labels."
+}

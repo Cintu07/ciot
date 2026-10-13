@@ -1,0 +1,9 @@
+{
+    "observed_utc":  "2026-10-13T14:48:36.2363375Z",
+    "gpu":  "NVIDIA GeForce RTX 5060 Laptop GPU, 8151 MiB, 610.74",
+    "server_sha256":  "4047B972165AE40C66F66772A909C8739540A5ACD3643EF9770DB30325F162A8",
+    "python":  "Python 3.13.15",
+    "resumed_qwen27_tasks":  79,
+    "task_set":  "first 60 GSM8K + first 40 HumanEval",
+    "power_note":  "Qwen 27B resumed on battery, then charger connected at approximately task 92; Qwen 8B records live power per task."
+}
