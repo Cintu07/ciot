@@ -9,3 +9,8 @@ __pycache__/
 bench/eval/results/smoke*
 *.err
 gpu-runtime/
+
+.vscode/
+bench/eval/results-rtx/*.partial.jsonl
+bench/eval/results-rtx/run_bonsai.out
+bench/eval/results-rtx/run_bonsai.err

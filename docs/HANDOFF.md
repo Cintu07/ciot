@@ -133,8 +133,16 @@ vendor/ on this laptop was copied from the old one:
 | Snapdragon CPU, stopped for heat | Bonsai PQ2_0 | 58/60 | 19/19 (first 19) | ~30 s/task |
 | RTX 5060, full set, stopped for heat | Bonsai PTQ1_0 | 69/70 | not reached | 14 tok/s on battery |
 | **RTX 5060, quick set (60 + 40)** | **Bonsai PTQ1_0** | **59/60** | **38/40** | 37.6 tok/s, 5.3 s/task |
-| RTX 5060, quick set, RUNNING | Qwen3.8-27B UD-IQ2_XXS (7.27 GB) | 7/8 so far | - | ~49 s/task (part runs on CPU) |
-| RTX 5060, quick set, QUEUED | Qwen3-8B Q6_K (6.73 GB) | - | - | - |
+| RTX 5060, quick set, done | Qwen3.8-27B UD-IQ2_XXS (7.27 GB) | 53/60 | 37/40 | 45 s/task (part runs on CPU) |
+| RTX 5060, quick set, done | Qwen3-8B Q6_K (6.73 GB) | 56/60 | 38/40 | 6.6 s/task |
+
+Paired exact sign tests on the same task ids (recomputed from the raw answers on 2026-10-14):
+
+- Bonsai vs Qwen3.8-27B 2-bit, GSM8K: Bonsai only 6, Qwen only 0, p = 0.031. The only significant difference.
+- Bonsai vs Qwen3-8B Q6_K, GSM8K: 3 to 0, p = 0.25, not significant.
+- HumanEval: Bonsai vs Qwen 27B 1 to 0, vs Qwen 8B 1 to 1. Ties within noise.
+
+Do not claim more than this. Read bench/eval/results-rtx/COMPARISON.md for the timing caveats (mixed battery/AC sessions, different file sizes).
 
 Result files for the full stopped run: bench/eval/results-rtx/bonsai2-27b-ptq1_0.stopped-full-run.jsonl.
 
@@ -212,9 +220,9 @@ Observations so far:
 - **A k=7 speculative sweep run died at exit** and lost buffered stdout. ciot-spec now uses setvbuf for unbuffered output.
 - **Over-claiming risk**: PTQ1_0 decode gains were inconclusive (4.0 / 6.2 vs ~4.35). Only claim the consistent 1.5x prompt gain.
 
-## 8. Running right now (at the time of writing)
+## 8. Running right now (historical: this finished on 2026-10-13, nothing is running)
 
-On this laptop, launched with:
+The Qwen runs below completed, with checkpoint resume. See the "Continuation" and "Latest state" sections at the end of this file. On this laptop, they were launched with:
 
 ```
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location C:\Users\pavan\Desktop\CIOT-V2; & .\bench\eval\run_rtx_windows.ps1 -Gsm 60 -He 40 *> bench\eval\results-rtx\run2_qwen.log"

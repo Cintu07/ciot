@@ -188,7 +188,7 @@ Bonsai 2 27B with T2P in the runtime (prio 2, mmap off):
   - Request the ring for ngram types too, capped. Bonsai's recurrent state is ~150 MB per ring slot, and ngram drafts default to 48–64 tokens, so an uncapped ring would need ~7 GB.
   - Use short ngram drafts (2–3 tokens, which matches the 4-token SMMLA verify tile).
 
-## 2026-10-13: evaluation resumed from Claude handoff
+## 2026-10-13: evaluation resumed from the handoff log
 
 - Confirmed no evaluation processes remained. Qwen 27B checkpoint contained 79/100 tasks (60 GSM8K, 19 HumanEval).
 - Added validated --resume support: check task order/IDs and fingerprints on new records, append rather than overwrite, retain old timings. Legacy records have no fingerprint, so only their IDs/order can be validated.
