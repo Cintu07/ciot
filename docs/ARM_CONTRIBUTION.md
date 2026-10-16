@@ -2,6 +2,59 @@
 
 Prepared on 2026-10-13 against PrismML prism revision e8fd209c975c80aa7fb36a8423571ff3b1b7e955. No upstream submission has been made.
 
+## Read this first: status on 2026-10-16
+
+The ARM validation of the clean patch is finished. The patch is ready for Pawan to propose to PrismML. Nothing has been posted upstream: no issue, PR or comment. The prompt at the end of this file tells the next session how to continue and when to delete this file.
+
+### What was done on the Snapdragon laptop (2026-10-16)
+
+1. Pulled the 10 commits made on the RTX 5060 laptop, including tools/validate_arm_contribution.ps1, tools/check_arm_tokens.py and bench/arm_repack_check/.
+2. Ran tools/validate_arm_contribution.ps1. Stock and candidate were both cloned at e8fd209 and built CPU-only with ARM64 clang (llvm-mingw).
+   - Small stage (Qwen3-0.6B PQ2_0 fixture) passed. Evidence: bench/contribution/arm-20261016-162025.
+   - Large stage (Bonsai 2 27B PQ2_0) passed. Evidence: bench/contribution/arm-20261016-163951.
+3. Fixed two bugs in the test tools. Both came from writing them on x64, and neither is in the patch:
+   - bench/arm_repack_check/CMakeLists.txt: ciot-token-check now links ggml-cpu. Static MinGW libraries need it explicitly; on x64 the runtime was built as DLLs, which hid this.
+   - bench/arm_repack_check/main.cpp: the exact-integer oracle now forces absmax 127 in every 256-value Q8_K block, not only the first. Without that, rows longer than 256 gave Q8_K a scale other than 1, so conversion was inexact. That caused 24 false failures (k = 512/1024, activation columns 3 and 4).
+4. Checked the patch against the newest prism commit, 5ae2e16 (2026-10-15).
+   - It applies cleanly.
+   - repack.cpp, repack.h, arch-fallback.h and arch/arm/repack.cpp are byte-identical to e8fd209. Only ggml-cpu.c changed, and the patch does not touch it.
+5. Cleaned up the Snapdragon, freeing 11.5 GB (C: went from 8.4 to 19.9 GB free).
+   - Deleted: Bonsai PTQ1_0, the partial Qwen3.8-27B IQ2_XXS and Qwen3-8B Q6_K downloads, Qwen3-0.6B Q8_0 and PTQ1_0, and the old vendor/prism-pr worktree.
+   - Kept: models/Ternary-Bonsai-2-27B-PQ2_0.gguf (chat model, Large stage), models/Qwen3-0.6B-PQ2_0.gguf (Small stage), vendor/prism-llama.cpp with its build (run_bonsai.ps1), vendor/prism-arm-stock and vendor/prism-arm-candidate, and build/ (validation builds, so a rerun takes minutes).
+6. Pushed everything as Pawan <pawankalyan1892@gmail.com>, with no Co-Authored-By trailers: commits 31c8858, beafd08 and this update.
+
+### Results (stock PrismML vs the patch, same revision, 4 threads, --prio 2)
+
+| check | Qwen3-0.6B PQ2_0 | Bonsai 2 27B PQ2_0 |
+|---|---|---|
+| direct CPU_REPACK cases (runs the new ARM code) | 78/78 | 78/78 |
+| test-backend-ops MUL_MAT pq2_0 | 219/219 on both | not run at this stage |
+| perplexity, 3 chunks | identical | identical (10.5976, 17.2967, 16.5409) |
+| greedy token IDs, 3 prompts | all match | all match |
+| prefill pp64 | 240.1 -> 788.4 tok/s (3.28x) | 4.87 -> 18.27 tok/s (3.76x) |
+| decode tg32 | 135.0 -> 146.2 tok/s (1.08x, overhead bound) | 4.17 -> 6.63 tok/s (1.59x) |
+
+The 27B perplexity pass took 27.52 s stock and 7.44 s with the patch. The older headline numbers (8.4 -> 31.7 prefill, 6.5 -> 9.7 decode) used 8 threads and the research build. These runs reproduce the same ratios with the clean patch alone.
+
+### What comes next
+
+1. T2P walkthrough with Pawan, using the review questions in "Explaining the design" below. He must be able to answer them without help; PrismML's AGENTS.md requires it.
+2. Pawan writes the PrismML issue himself, proposing the PQ2_0 ARM repack with the numbers above. AI help goes in their template disclosure.
+3. Right before the PR, rerun the Small stage on the Snapdragon against the newest prism revision (update $revision in tools/validate_arm_contribution.ps1). That takes about 5 minutes with builds in place.
+4. Pawan opens the PR from the clean patch, with the AI disclosure line in PrismML's template.
+5. Optional:
+   - The full RTX 5060 eval (-Gsm 250 -He 164, 1-2 hours of GPU).
+   - A later PR for ngram speculation on hybrid models: cap the rollback ring, use short drafts. Check open PRs #208, #289 and #320 first.
+   - Further ARM speed work.
+
+The Snapdragon is still needed for step 3 and for any change reviewers request. ARM code can only be tested on ARM hardware, or on an ARM cloud VM with i8mm such as AWS Graviton3.
+
+Standing rules:
+- Pawan writes every public word: issues, PRs, comments, posts.
+- No Co-Authored-By trailers or assistant credits in his commits or READMEs.
+- Commit as pawankalyan1892@gmail.com.
+- PrismML requires AI disclosure inside the PR template.
+
 ## Scope and evidence
 
 The candidate is patches/pr-arm-pq2_0-repack.patch. It changes only ggml/src/ggml-cpu/repack.cpp. It adds an internal row-pair layout for the existing PQ2_0 type, SDOT decode, SMMLA batches, a dotprod-only fallback, and handling for batches with two or three remaining activation rows. It changes no GGUF format and trains no new model.
@@ -129,3 +182,33 @@ Checked on 2026-10-16:
 - The patch also applies cleanly to the newest prism commit, 5ae2e16 (2026-10-15).
 - repack.cpp, repack.h, arch-fallback.h and arch/arm/repack.cpp are byte-identical between e8fd209 and 5ae2e16. Only ggml-cpu.c changed, and the patch does not touch it.
 - Before submitting, rerun Small against the newest revision.
+## Prompt for the next session (paste this as the first message)
+
+```text
+You are continuing CIOT-V2 (repo github.com/Cintu07/ciot, branch main). Run git pull first.
+
+Read, in this order: docs/ARM_CONTRIBUTION.md (start with "Read this first: status on 2026-10-16"), docs/HANDOFF.md, docs/PROGRESS.md.
+
+State: the clean ARM patch patches/pr-arm-pq2_0-repack.patch is fully validated on the Snapdragon X against PrismML prism e8fd209, and it still applies to 5ae2e16:
+- Small and Large stages passed.
+- 78/78 direct repack cases.
+- Identical perplexity and greedy tokens.
+- 27B: 3.76x prefill and 1.59x decode at 4 threads.
+- Evidence is in bench/contribution/arm-20261016-162025 and arm-20261016-163951.
+Nothing has been posted to PrismML.
+
+Do this:
+1. Move everything still useful from docs/ARM_CONTRIBUTION.md into docs/HANDOFF.md and docs/PROGRESS.md, so nothing is lost:
+   - the validation results table and run folder paths;
+   - the two test-tool fixes;
+   - the design explanation and the five review questions;
+   - the submission rules;
+   - the "what comes next" list.
+2. Delete docs/ARM_CONTRIBUTION.md. Update every reference to it (grep the repo: README.md, docs/*.md, tools/, bench/) so none point at a missing file.
+3. Commit as Pawan <pawankalyan1892@gmail.com>. No Co-Authored-By trailer and no assistant credit anywhere. Push to main.
+4. Then start the T2P walkthrough with Pawan. Quiz him on the review questions until he can explain the row-pair layout, the x4/x16 recombine, sum(y) from bsums, the SMMLA operand shape and the padded leftover rows without help.
+
+Rules:
+- Never post an issue, PR, comment or social post. Pawan writes all public text himself, and PrismML requires the AI disclosure in its PR template.
+- The ARM checks can only run on the Snapdragon laptop. If a rerun is needed, tell him to run there: powershell -NoProfile -ExecutionPolicy Bypass -File tools/validate_arm_contribution.ps1 -Stage Small -Python C:\Python314\python.exe
+```
