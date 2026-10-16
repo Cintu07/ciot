@@ -114,7 +114,7 @@ $modelName = if ($Stage -eq 'Large') { 'Ternary-Bonsai-2-27B-PQ2_0.gguf' } else 
 $model = Join-Path $root "models/$modelName"
 if (-not (Test-Path $model)) { throw "Missing model: $model" }
 $inputFile = Join-Path $run 'ppl-input.txt'
-[IO.File]::WriteAllText($inputFile, [IO.File]::ReadAllText((Join-Path $root 'README.md')), $utf8)
+[IO.File]::WriteAllText($inputFile, [IO.File]::ReadAllText((Join-Path $root 'tools/ppl-input.txt')), $utf8)
 $ppl = @{}
 foreach ($mode in @('stock','candidate')) {
     $ppl[$mode] = Invoke-Recorded "$mode-perplexity" (Join-Path $bins[$mode] 'llama-perplexity.exe') @('-m',$model,'-f',$inputFile,'-c','128','--chunks','3','-b','128','-ub','128','-t',"$Threads",'-tb',"$Threads",'-ngl','0','--prio','2','--load-mode','none')

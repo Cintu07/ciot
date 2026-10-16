@@ -2,3 +2,4 @@
 *.patch -text
 bench/prompts/*.txt -text
 bench/eval/data/*.jsonl -text
+tools/ppl-input.txt -text
