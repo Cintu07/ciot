@@ -94,3 +94,20 @@ References:
 - https://github.com/PrismML-Eng/llama.cpp/blob/prism/AGENTS.md
 - https://github.com/PrismML-Eng/llama.cpp/blob/prism/CONTRIBUTING.md
 - https://github.com/PrismML-Eng/llama.cpp/pull/290
+
+## ARM Small-stage validation, 2026-10-16 (Snapdragon X X126100)
+
+Run: bench/contribution/arm-20261016-162025. Command: tools/validate_arm_contribution.ps1 -Stage Small. Stock and candidate builds at e8fd209, CPU only, 4 inference threads, 2 build jobs.
+
+- 78/78 direct CPU_REPACK cases passed. This runs the new ARM repacker: activation widths 1-8, rows 4/8/12, inner widths 256/512/1024, and the selector declining unsupported shapes.
+- test-backend-ops MUL_MAT type_a=pq2_0: 219/219 on both stock and candidate.
+- Perplexity, Qwen3-0.6B PQ2_0 fixture, 3 chunks: 273346581.6497, 135191845.7288, 113512154.8283 on both builds.
+- Greedy token IDs: 3 prompts x 32 tokens, all match.
+- llama-bench, two interleaved rounds: pp64 240.1 -> 788.4 tok/s (3.28x); tg32 135.0 -> 146.2 tok/s (1.08x, noisy; a model this small is overhead bound).
+
+Two fixes to the test tools were needed on ARM. Neither is a change to the patch:
+
+- bench/arm_repack_check/CMakeLists.txt: ciot-token-check did not link ggml-cpu. Static MinGW libraries need it; the x64 build used DLLs, which hid the problem.
+- bench/arm_repack_check/main.cpp: the exact-integer oracle forced absmax 127 only in a column's first 256 values. Q8_K has one scale per 256, so for k = 512/1024 the second block could get a scale other than 1. Conversion was then inexact and the comparison failed (24 cases, only columns whose later blocks lacked +/-127). The tool now forces +/-127 in every 256-value block.
+
+Still pending: the Large stage (Bonsai 27B), full applicable upstream CI, and testing on other ARM cores.

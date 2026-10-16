@@ -18,7 +18,7 @@ find_library(llama_library NAMES llama PATHS "${PRISM_BUILD}/src" "${PRISM_BUILD
 add_executable(ciot-token-check token_ids.cpp)
 target_compile_definitions(ciot-token-check PRIVATE LLAMA_SHARED GGML_SHARED)
 target_include_directories(ciot-token-check PRIVATE "${PRISM_SOURCE}/include" "${PRISM_SOURCE}/ggml/include")
-target_link_libraries(ciot-token-check PRIVATE ${llama_library} ${ggml_library} ${ggml-base_library})
+target_link_libraries(ciot-token-check PRIVATE ${llama_library} ${ggml_library} ${ggml-cpu_library} ${ggml-base_library})
 file(GLOB runtime_dlls "${PRISM_BUILD}/bin/*.dll" "${PRISM_BUILD}/bin/Release/*.dll")
 if(runtime_dlls)
     add_custom_target(ciot-runtime-copy ALL COMMAND ${CMAKE_COMMAND} -E copy_if_different

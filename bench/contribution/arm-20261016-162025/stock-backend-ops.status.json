@@ -1,0 +1,15 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "test",
+                      "-b",
+                      "CPU",
+                      "-o",
+                      "MUL_MAT",
+                      "-p",
+                      "type_a=pq2_0",
+                      "-j",
+                      "1"
+                  ],
+    "executable":  "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\prism-arm-stock\\bin\\test-backend-ops.exe"
+}

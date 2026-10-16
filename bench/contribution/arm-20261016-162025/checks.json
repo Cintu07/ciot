@@ -1,0 +1,7 @@
+{
+    "greedy_token_ids_checked":  true,
+    "full_ci_run":  false,
+    "ppl_printed_chunks_equal":  true,
+    "repacked_operator_boundary_cases_checked":  true,
+    "note":  "78 direct CPU_REPACK cases cover integer activations with exact Q8_K conversion. Token comparison is limited to three prompts. Standard backend tests use ordinary CPU buffers."
+}

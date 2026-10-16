@@ -1,0 +1,2 @@
+[1/2] Building CXX object CMakeFiles/ciot-arm-repack-check.dir/main.cpp.obj
+[2/2] Linking CXX executable ciot-arm-repack-check.exe

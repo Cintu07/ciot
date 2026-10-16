@@ -1,0 +1,23 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "-S",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\vendor\\prism-arm-candidate",
+                      "-B",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\prism-arm-candidate",
+                      "-G",
+                      "Ninja",
+                      "-DCMAKE_BUILD_TYPE=Release",
+                      "-DCMAKE_C_COMPILER=clang",
+                      "-DCMAKE_CXX_COMPILER=clang++",
+                      "-DGGML_NATIVE=ON",
+                      "-DGGML_OPENMP=OFF",
+                      "-DGGML_CUDA=OFF",
+                      "-DLLAMA_CURL=OFF",
+                      "-DLLAMA_BUILD_SERVER=OFF",
+                      "-DLLAMA_BUILD_TESTS=ON",
+                      "-DCMAKE_C_FLAGS=-D_WIN32_WINNT=0x0A00",
+                      "-DCMAKE_CXX_FLAGS=-D_WIN32_WINNT=0x0A00"
+                  ],
+    "executable":  "cmake"
+}

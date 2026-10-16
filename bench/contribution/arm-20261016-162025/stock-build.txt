@@ -1,0 +1,5 @@
+[1/5] Building CXX object common/CMakeFiles/llama-common-base.dir/build-info.cpp.obj
+[2/5] Linking CXX static library common\libllama-common-base.a
+[3/5] Linking CXX executable bin\test-backend-ops.exe
+[4/5] Linking CXX executable bin\llama-bench.exe
+[5/5] Linking CXX executable bin\llama-perplexity.exe

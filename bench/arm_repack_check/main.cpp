@@ -57,8 +57,11 @@ static bool check_case(ggml_backend_t backend, ggml_backend_buffer_type_t repack
                 activations[c * k + j] = pattern == 4 ? 0.0f : (c % 2 ? -127.0f : 127.0f);
             }
         } else {
-            activations[c * k] = 127.0f;
-            activations[c * k + 1] = -127.0f;
+            // Q8_K has one scale per 256 values, so every block needs absmax 127 for exact conversion.
+            for (int b = 0; b < k; b += QK_K) {
+                activations[c * k + b] = 127.0f;
+                activations[c * k + b + 1] = -127.0f;
+            }
         }
     }
     ggml_tensor * a = ggml_new_tensor_2d(ops, GGML_TYPE_F32, k, columns);

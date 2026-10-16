@@ -1,0 +1,16 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "-S",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\bench\\arm_repack_check",
+                      "-B",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\arm-check-stock",
+                      "-G",
+                      "Ninja",
+                      "-DCMAKE_BUILD_TYPE=Release",
+                      "-DCMAKE_CXX_COMPILER=clang++",
+                      "-DPRISM_SOURCE=C:\\Users\\Pawan\\Desktop\\CIOT-V2\\vendor\\prism-arm-stock",
+                      "-DPRISM_BUILD=C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\prism-arm-stock"
+                  ],
+    "executable":  "cmake"
+}

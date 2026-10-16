@@ -1,0 +1,28 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "-m",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\models\\Qwen3-0.6B-PQ2_0.gguf",
+                      "-f",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\bench\\contribution\\arm-20261016-162025\\ppl-input.txt",
+                      "-c",
+                      "128",
+                      "--chunks",
+                      "3",
+                      "-b",
+                      "128",
+                      "-ub",
+                      "128",
+                      "-t",
+                      "4",
+                      "-tb",
+                      "4",
+                      "-ngl",
+                      "0",
+                      "--prio",
+                      "2",
+                      "--load-mode",
+                      "none"
+                  ],
+    "executable":  "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\prism-arm-stock\\bin\\llama-perplexity.exe"
+}

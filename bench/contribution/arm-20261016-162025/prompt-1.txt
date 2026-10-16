@@ -1,0 +1,7 @@
+<|im_start|>user
+What is 17 + 25? Give a short explanation and the answer.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
