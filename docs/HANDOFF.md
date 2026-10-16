@@ -238,7 +238,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Set-Location C:\Users\pa
   Also look at the *.partial.jsonl files.
 - If it died, rerun the same command. Finished models are skipped, but a half-done model restarts from zero.
 
-## 9. Next steps, in order
+## 9. Next steps, in order (partly superseded: see the last section, "ARM contribution: validated on the Snapdragon")
 
 1. **Wait for both Qwen runs to finish.** Then:
    - read the three *.summary.json files;
@@ -305,7 +305,99 @@ All three 60+40 runs completed. Bonsai: 59/60 and 38/40; Qwen 27B: 53/60 and 37/
 - 219/219 executed PQ2_0 CPU/reference cases passed; 75/75 Q4/Q8 shared-tail cases passed. These ordinary-buffer checks do not execute the new ARM repacker.
 - Added standalone direct CPU_REPACK and native greedy-ID tools outside upstream's tests directory. Both compile on x64 and pass ARM syntax checks. Repack tool correctly skips x64; its 78 synthetic ARM cases are pending.
 - Native token checker passed same-binary control on 3 prompts x 32 IDs and a mismatch-rejection check. This validates the checker, not ARM stock/candidate equivalence. A prior server-based approach hit chat-parser errors on the requantized tiny fixture; native IDs avoid that dependency.
-- tools/validate_arm_contribution.ps1 prepares stock/candidate builds and runs direct cases, perplexity, token IDs and interleaved model benchmarks. Plan mode and x64 refusal checked; ARM pipeline pending. See docs/ARM_CONTRIBUTION.md.
+- tools/validate_arm_contribution.ps1 prepares stock/candidate builds and runs direct cases, perplexity, token IDs and interleaved model benchmarks. Plan mode and x64 refusal checked. The pipeline was later run on the Snapdragon; see the last section of this file.
 - User has the Snapdragon laptop and asked about timing. Estimate 30-60 minutes first pass with toolchain/models available, mostly compilation, with model runs in shorter blocks. Need to switch workspace/chat there or establish remote access; only GitHub SSH was configured here.
 - User says he read contribution rules and understands the design, and requested a first-principles guide to CUDA/inference terminology. Added docs/INFERENCE_FROM_FIRST_PRINCIPLES.md.
 - User requested short lowercase Twitter drafts. Added docs/POST_DRAFTS.md. No public post, issue, PR or push was made.
+
+
+## ARM contribution: validated on the Snapdragon, status on 2026-10-16
+
+Moved here from the ARM contribution prep doc, which was deleted on 2026-10-16 (it is in git history). The run details, results and test-tool fixes are in docs/PROGRESS.md under "2026-10-16: ARM validation of the clean patch".
+
+### Status
+
+The ARM validation of the clean patch is finished. patches/pr-arm-pq2_0-repack.patch changes only ggml/src/ggml-cpu/repack.cpp and is ready for Pawan to propose to PrismML. Nothing has been posted upstream: no issue, PR or comment.
+
+- Small stage (Qwen3-0.6B PQ2_0 fixture) and Large stage (Bonsai 2 27B PQ2_0) both passed on the Snapdragon X, against stock PrismML built from the same revision (e8fd209), CPU only.
+- 78/78 direct CPU_REPACK cases, identical perplexity, identical greedy token IDs.
+- 27B at 4 threads: prefill 4.87 -> 18.27 tok/s (3.76x), decode 4.17 -> 6.63 tok/s (1.59x).
+- The patch still applies to prism 5ae2e16 (2026-10-15). repack.cpp, repack.h, arch-fallback.h and arch/arm/repack.cpp are byte-identical to e8fd209. Only ggml-cpu.c changed, and the patch does not touch it.
+- Evidence: bench/contribution/arm-20261016-162025 (Small) and bench/contribution/arm-20261016-163951 (Large).
+
+Two gaps found on 2026-10-16 when the evidence was audited. Neither breaks the result, but say so rather than hide them:
+
+- **Both validation runs were on battery** (38% and 32%; environment.json BatteryStatus 1). Stock and candidate were interleaved under the same conditions, so the ratios are fair. The absolute tok/s are probably lower than on AC. Rerun on the charger before quoting absolute numbers in a public issue.
+- **The dotprod-only path (no i8mm) has never been executed.** The runner builds with the compiler's native features, and the Snapdragon has i8mm, so only the SMMLA path ran. The dotprod-only fallback was syntax-checked with an ARM64 cross compile on x64 (armv8.2-a+dotprod). It needs a build without i8mm, run on ARM hardware, before the patch claims to be safe on dotprod-only CPUs. PrismML reviewers may ask.
+
+### What comes next
+
+1. T2P walkthrough with Pawan, using the review questions below. He must answer them without help; PrismML's AGENTS.md requires it.
+2. Pawan writes the PrismML issue himself, proposing the PQ2_0 ARM repack with the numbers above. AI help goes in their template disclosure.
+3. Right before the PR, rerun the Small stage on the Snapdragon against the newest prism revision (update $revision in tools/validate_arm_contribution.ps1). About 5 minutes with the builds in place. Do it on the charger. Also add a dotprod-only build run (see the gap above).
+4. Pawan opens the PR from the clean patch, with the AI disclosure line in PrismML's template.
+5. Optional:
+   - The full RTX 5060 eval (-Gsm 250 -He 164). The 2-bit Qwen 27B takes about 45 s per answer there because it does not fit in 8 GB, so Kaggle's 16 GB T4 is the better place.
+   - A later PR for ngram speculation on hybrid models: cap the rollback ring, use short drafts. Check open PRs #208, #289 and #320 first.
+   - Further ARM speed work.
+
+The Snapdragon is needed for step 3 and for any change reviewers request. ARM code can only be tested on ARM hardware, or on an ARM cloud VM with i8mm such as AWS Graviton3.
+
+### Snapdragon laptop state after the 2026-10-16 cleanup
+
+- Freed 11.5 GB (C: from 8.4 to 19.9 GB free). Deleted: Bonsai PTQ1_0, the partial Qwen3.8-27B IQ2_XXS and Qwen3-8B Q6_K downloads, Qwen3-0.6B Q8_0 and PTQ1_0, and the old vendor/prism-pr worktree.
+- Kept: models/Ternary-Bonsai-2-27B-PQ2_0.gguf (chat model, Large stage), models/Qwen3-0.6B-PQ2_0.gguf (Small stage), vendor/prism-llama.cpp with its build (run_bonsai.ps1), vendor/prism-arm-stock and vendor/prism-arm-candidate, and build/ (validation builds, so a rerun takes minutes).
+
+### Standing rules
+
+- Pawan writes every public word: issues, PRs, comments, posts.
+- No Co-Authored-By trailers or assistant credits in his commits or READMEs.
+- Commit as pawankalyan1892@gmail.com.
+- PrismML requires AI disclosure inside the PR template.
+
+### What the candidate is, and what it is not
+
+patches/pr-arm-pq2_0-repack.patch adds an internal row-pair layout for the existing PQ2_0 type, SDOT decode, SMMLA batches, a dotprod-only fallback, and handling for batches with two or three remaining activation rows. It changes no GGUF format and trains no new model. The complete research patch (patches/prism-llama.cpp-t2-neon.patch) also holds speculation and profiling: do not include it in the contribution, and do not credit the clean patch with the 14 tok/s code-edit result, which needs that speculation code.
+
+### Explaining the design (for the walkthrough)
+
+PQ2_0 stores u = w + 1, where w is -1, 0 or +1. Thus u is 0, 1 or 2. Repacking rearranges these two-bit codes and keeps the original fp16 scale for each 128-weight block.
+
+SMMLA multiplies a 2-by-8 matrix by an 8-by-2 matrix. Grouping eight weights of row A next to the same eight weights of row B gives its left operand directly. The old layout requires shuffling weights into that shape during each multiply. Loading a model pays the rearrangement cost once.
+
+Three slots are masked without shifting. Their integer values carry factors 1, 4 and 16; the highest slot is shifted down. Let A0 and A3 be the unscaled slot sums, A1 the sum scaled by 4, and A2 the sum scaled by 16. Then:
+
+```text
+A2 + 4*A1 + 16*(A0 + A3) = 16*dot(u, y)
+dot(w, y) = dot(u, y) - sum(y)
+```
+
+The kernel subtracts 16*sum(y) and includes 1/16 in the scale. Integer accumulation is exact within the bounded 128-weight block; this does not by itself guarantee identical floating-point results for every input. SDOT gets sum(y) from Q8_K's existing block sums. SMMLA calculates column sums from its interleaved activation chunks and reuses them across weight rows.
+
+SDOT covers one activation row, with eight activation values duplicated to match both weight rows. SMMLA handles four activation rows at once. For two or three leftover activation rows, the patch pads a four-row activation tile with zeros, performs one batch multiply, and copies only the real outputs. One leftover row still uses SDOT. Without i8mm, the fallback reconstructs ordinary activation rows and runs SDOT.
+
+The five review questions Pawan must answer without help:
+
+- Why can these codes stay in place during the dot product without changing the result?
+- Why is the sum of activations subtracted, and why does it carry a factor of 16?
+- Why does the layout use row pairs, even for single-token decoding?
+- What happens to padded rows and unsupported matrix shapes?
+- Which CPU features are required, and how does the implementation avoid unsupported instructions?
+
+### Submission responsibilities
+
+The PTQ1_0 idea was already implemented by upstream PR #290. This candidate targets PQ2_0 repacking. Searches on 2026-10-13 and 2026-10-14 found no duplicate T2P proposal, but related repack fixes exist (#226, #190) and should be checked again before submission.
+
+PrismML's AGENTS.md and CONTRIBUTING.md require understanding and manual review of the code, explicit disclosure of meaningful AI assistance, and a feature discussion before a PR. AGENTS.md also restricts automated submissions and reviewer replies. Pawan writes and submits the issue and PR text, understands the design and owns maintenance. Agents supply facts and a walkthrough, never text to publish unchanged. Never post anything public without showing him the exact text first.
+
+References: https://github.com/PrismML-Eng/llama.cpp/blob/prism/AGENTS.md, https://github.com/PrismML-Eng/llama.cpp/blob/prism/CONTRIBUTING.md, https://github.com/PrismML-Eng/llama.cpp/pull/290
+
+### Rerunning the validation (Snapdragon only)
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/validate_arm_contribution.ps1 -PlanOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/validate_arm_contribution.ps1 -Stage Small -Python C:\Python314\python.exe
+powershell -NoProfile -ExecutionPolicy Bypass -File tools/validate_arm_contribution.ps1 -Stage Large -Python C:\Python314\python.exe
+```
+
+Needs ARM64 clang/clang++ and Ninja on PATH, and the PQ2_0 model files in models/. It downloads source only, not models. It builds stock and candidate at the same revision, runs CPU only, records commands and outputs, compares three printed perplexity chunks, compares greedy token IDs on three prompts through the native model API, runs two interleaved benchmark rounds, and runs a 78-case direct repacked-buffer check. Defaults: two compile workers and four inference threads; the old headline numbers used eight (-Threads 8).

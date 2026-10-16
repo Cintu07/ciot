@@ -227,7 +227,62 @@ All three models now have 100 answers: 60 GSM8K and 40 HumanEval.
 - 219/219 executed PQ2_0 CPU/reference cases passed; 75/75 Q4/Q8 shared-tail cases passed. These ordinary-buffer checks do not execute the new ARM repacker.
 - Added standalone direct CPU_REPACK and native greedy-ID tools outside upstream's tests directory. Both compile on x64 and pass ARM syntax checks. Repack tool correctly skips x64; its 78 synthetic ARM cases are pending.
 - Native token checker passed same-binary control on 3 prompts x 32 IDs and a mismatch-rejection check. This validates the checker, not ARM stock/candidate equivalence. A prior server-based approach hit chat-parser errors on the requantized tiny fixture; native IDs avoid that dependency.
-- tools/validate_arm_contribution.ps1 prepares stock/candidate builds and runs direct cases, perplexity, token IDs and interleaved model benchmarks. Plan mode and x64 refusal checked; ARM pipeline pending. See docs/ARM_CONTRIBUTION.md.
+- tools/validate_arm_contribution.ps1 prepares stock/candidate builds and runs direct cases, perplexity, token IDs and interleaved model benchmarks. Plan mode and x64 refusal checked. The pipeline was later run on the Snapdragon; see the 2026-10-16 section below.
 - User has the Snapdragon laptop and asked about timing. Estimate 30-60 minutes first pass with toolchain/models available, mostly compilation, with model runs in shorter blocks. Need to switch workspace/chat there or establish remote access; only GitHub SSH was configured here.
 - User says he read contribution rules and understands the design, and requested a first-principles guide to CUDA/inference terminology. Added docs/INFERENCE_FROM_FIRST_PRINCIPLES.md.
 - User requested short lowercase Twitter drafts. Added docs/POST_DRAFTS.md. No public post, issue, PR or push was made.
+
+
+## 2026-10-16: ARM validation of the clean patch (Snapdragon X X126100)
+
+Moved here from the ARM contribution prep doc (deleted on 2026-10-16, in git history). Status, next steps, the design explanation and the submission rules are in the last section of docs/HANDOFF.md.
+
+Setup: patches/pr-arm-pq2_0-repack.patch, stock and candidate both cloned at PrismML prism e8fd209 (e8fd209c975c80aa7fb36a8423571ff3b1b7e955) and built CPU only with ARM64 clang (llvm-mingw), 2 build jobs, 4 inference threads, --prio 2, --load-mode none. Command: tools/validate_arm_contribution.ps1 -Stage Small / -Stage Large. Both runs were on battery (38% and 32%).
+
+| check | Qwen3-0.6B PQ2_0 (run arm-20261016-162025) | Bonsai 2 27B PQ2_0 (run arm-20261016-163951) |
+|---|---|---|
+| direct CPU_REPACK cases (executes the new ARM repacker) | 78/78 | 78/78 |
+| test-backend-ops MUL_MAT type_a=pq2_0 | 219/219 on both | not run at this stage |
+| perplexity, 3 chunks | 273346581.6497, 135191845.7288, 113512154.8283 on both | 10.5976, 17.2967, 16.5409 on both |
+| greedy token IDs, 3 prompts | all match (3 x 32) | all match (32, 28, 25 tokens; two prompts hit end of generation) |
+| prefill pp64 | 240.1 -> 788.4 tok/s (3.28x) | 4.87 -> 18.27 tok/s (3.76x) |
+| decode tg32 | 135.0 -> 146.2 tok/s (1.08x; a model this small is overhead bound, noisy) | 4.17 -> 6.63 tok/s (1.59x) |
+
+- 27B perplexity pass: 27.52 s stock, 7.44 s candidate. Benchmark rounds were two, interleaved, stddev 0.21 or less.
+- The direct check covers activation widths 1, 2, 3, 4, 5, 7 and 8; row counts 4, 8 and 12; inner widths 256, 512 and 1024; selector rejection for non-tiled shapes; zero activations and weights; constant and extreme inputs. Integer activations make the Q8_K conversion exact, so an independent scalar dot-product oracle can compare exactly.
+- The older headline numbers (8.4 -> 31.7 prefill, 6.5 -> 9.7 decode) used 8 threads and the research build. These runs reproduce the ratios with the clean patch alone at the default validation settings.
+- A first Large attempt stalled for minutes on `git rev-parse` in the stock checkout. It was killed and rerun unchanged, and its empty run folder was deleted.
+
+### Two fixes to the test tools (not to the patch)
+
+Both came from writing the tools on x64 and were found on ARM:
+
+- bench/arm_repack_check/CMakeLists.txt: ciot-token-check did not link ggml-cpu. Static MinGW libraries need it explicitly; the x64 build used DLLs, which hid the problem.
+- bench/arm_repack_check/main.cpp: the exact-integer oracle forced absmax 127 only in a column's first 256 values. Q8_K has one scale per 256, so for k = 512 or 1024 a later block could get a scale other than 1, conversion was inexact and the comparison failed (24 false failures, k = 512/1024, activation columns 3 and 4). The tool now forces +/-127 in every 256-value block.
+
+### Drift check against upstream (2026-10-16)
+
+The patch also applies cleanly to prism 5ae2e16 (2026-10-15). repack.cpp, repack.h, arch-fallback.h and arch/arm/repack.cpp are byte-identical between e8fd209 and 5ae2e16. Only ggml-cpu.c changed, and the patch does not touch it. Rerun the Small stage against the newest revision right before submitting.
+
+### Not yet covered
+
+- **dotprod-only path (no i8mm).** Never executed. The runner builds with the compiler's native features and the Snapdragon has i8mm, so only SMMLA ran. The fallback was syntax-checked only (ARM64 cross compile on x64, armv8.2-a+dotprod). Needs a no-i8mm build run on ARM hardware.
+- **Battery.** Both runs were on battery. Ratios are fair (interleaved), absolute tok/s are probably low. Rerun on AC before quoting absolute numbers.
+- Full applicable upstream CI, other ARM cores, general floating-point inputs and runtime ISA selection.
+- A match at printed perplexity precision is not proof of identical logits. The Qwen3-0.6B fixture is requantized, not a trained ternary model; its prose can be incoherent. Token IDs are compared through the native model API because a server-based attempt hit chat-parser errors.
+- These tools live outside upstream's tests directory; upstream requires approval before adding files there.
+
+### x64 evidence from 2026-10-13 (RTX laptop)
+
+- The clean candidate applied to prism e8fd209 and passed git whitespace checks.
+- The full modified repack.cpp passed Clang 23.1.3 ARM64 Windows syntax checks for armv8.2-a+dotprod and armv8.6-a+dotprod+i8mm.
+- A CPU-only MSVC x64 Release build succeeded for test-backend-ops, llama-bench, llama-perplexity and llama-completion.
+- Existing PQ2_0 MUL_MAT tests: 219/219 executed CPU/reference cases. Existing Q4_0/Q8_0 tests covering the shared remainder-loop wrapper: 75/75.
+- These do not execute ARM instructions or the repacked buffer. Evidence files: bench/contribution/preparation.json, x64-backend-ops and x64-tail-regression status JSONs, and the adjacent .txt files. Raw .log files stay local; their hashes are in the status files.
+
+### Historical measurements and how they relate
+
+- Research integration, Snapdragon X, Bonsai 27B PQ2_0, 8 threads: stock pp64 8.4 and tg32 6.5; T2P pp64 about 31.7 and tg32 about 9.7 (bench/e2e_bonsai_20261007_202636.txt, bench/e2e_t2p_27b.txt).
+- The 14 tok/s code-edit result includes the custom speculation from the research patch. It is not a result of the clean repack patch.
+- The Qwen3-0.6B perplexity pass was about 2.2x faster with the repack in an earlier check on the research branch (historical).
+- The RTX accuracy comparison uses PrismML's official CUDA runtime and is independent of this ARM patch.
