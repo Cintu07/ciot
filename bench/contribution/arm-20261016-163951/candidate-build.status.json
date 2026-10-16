@@ -1,0 +1,14 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "--build",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\prism-arm-candidate",
+                      "--target",
+                      "test-backend-ops",
+                      "llama-bench",
+                      "llama-perplexity",
+                      "--parallel",
+                      "2"
+                  ],
+    "executable":  "cmake"
+}

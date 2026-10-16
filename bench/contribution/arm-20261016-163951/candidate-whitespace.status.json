@@ -1,0 +1,10 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "-C",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\vendor\\prism-arm-candidate",
+                      "diff",
+                      "--check"
+                  ],
+    "executable":  "git"
+}

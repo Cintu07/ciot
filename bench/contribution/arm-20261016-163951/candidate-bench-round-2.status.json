@@ -1,0 +1,24 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "-m",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\models\\Ternary-Bonsai-2-27B-PQ2_0.gguf",
+                      "-p",
+                      "64",
+                      "-n",
+                      "32",
+                      "-r",
+                      "2",
+                      "-t",
+                      "4",
+                      "-ngl",
+                      "0",
+                      "--prio",
+                      "2",
+                      "--load-mode",
+                      "none",
+                      "-o",
+                      "json"
+                  ],
+    "executable":  "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\prism-arm-candidate\\bin\\llama-bench.exe"
+}

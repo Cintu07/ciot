@@ -1,0 +1,19 @@
+llama-perplexity.exe : warning: no usable GPU found, --gpu-layers option will be ignored
+At C:\Users\Pawan\Desktop\CIOT-V2\tools\validate_arm_contribution.ps1:46 char:21
++     try { $output = & $Exe @NativeArgs 2>&1; $code = $LASTEXITCODE }
++                     ~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: no usa...will be ignored:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: one possible reason is that llama.cpp was compiled without GPU support
+warning: consult docs/build.md for compilation instructions
+0.08.459.762 I cmn          init: llama threadpool init, n_threads = 4
+0.08.975.569 I 
+0.08.979.318 I system_info: n_threads = 4 (n_threads_batch = 4) / 8 | CPU : NEON = 1 | ARM_FMA = 1 | FP16_VA = 1 | MATMUL_INT8 = 1 | DOTPROD = 1 | REPACK = 1 | 
+0.08.979.760 I perplexity: tokenizing the input ..
+0.08.984.374 I perplexity: tokenization took 4.6 ms
+0.08.984.386 I perplexity: calculating perplexity over 3 chunks, n_ctx=128, batch_size=128, n_seq=1
+1.37 minutes
+[1]10.5976,[2]17.2967,[3]16.5409,
+0.36.505.944 I perplexity: 27.52 seconds per pass - ETA 1.30.589.587 I Final estimate: PPL = 16.5409 +/- 3.61419
+

@@ -111,3 +111,21 @@ Two fixes to the test tools were needed on ARM. Neither is a change to the patch
 - bench/arm_repack_check/main.cpp: the exact-integer oracle forced absmax 127 only in a column's first 256 values. Q8_K has one scale per 256, so for k = 512/1024 the second block could get a scale other than 1. Conversion was then inexact and the comparison failed (24 cases, only columns whose later blocks lacked +/-127). The tool now forces +/-127 in every 256-value block.
 
 Still pending: the Large stage (Bonsai 27B), full applicable upstream CI, and testing on other ARM cores.
+## ARM Large-stage validation, 2026-10-16 (Bonsai 2 27B PQ2_0, Snapdragon X)
+
+Run: bench/contribution/arm-20261016-163951. Command: tools/validate_arm_contribution.ps1 -Stage Large. Same stock and candidate builds at e8fd209, CPU only, 4 inference threads, --prio 2, --load-mode none.
+
+- 78/78 direct CPU_REPACK cases passed again.
+- Perplexity, 3 chunks of 128 tokens: 10.5976, 17.2967, 16.5409 on both builds. Time per pass: 27.52 s stock, 7.44 s candidate.
+- Greedy token IDs: 3 prompts, all match. 32, 28 and 25 tokens; two prompts stopped at end of generation.
+- llama-bench, two interleaved rounds (stddev 0.21 or less):
+  - pp64: 4.87 -> 18.27 tok/s (3.76x).
+  - tg32: 4.17 -> 6.63 tok/s (1.59x).
+- The earlier headline numbers (8.4 -> 31.7 and 6.5 -> 9.7) used 8 threads and the research build. This run reproduces the ratio on the clean patch alone, at the default validation settings.
+
+A first attempt stalled for minutes on `git rev-parse` in the stock checkout and was killed and rerun unchanged. Its empty run folder was deleted.
+
+Checked on 2026-10-16:
+- The patch also applies cleanly to the newest prism commit, 5ae2e16 (2026-10-15).
+- repack.cpp, repack.h, arch-fallback.h and arch/arm/repack.cpp are byte-identical between e8fd209 and 5ae2e16. Only ggml-cpu.c changed, and the patch does not touch it.
+- Before submitting, rerun Small against the newest revision.

@@ -1,0 +1,35 @@
+-- llama.cpp version: 0.2.0-dev
+cmake.exe : CMAKE_BUILD_TYPE=Release
+At C:\Users\Pawan\Desktop\CIOT-V2\tools\validate_arm_contribution.ps1:46 char:21
++     try { $output = & $Exe @NativeArgs 2>&1; $code = $LASTEXITCODE }
++                     ~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (CMAKE_BUILD_TYPE=Release:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+-- Warning: ccache not found - consider installing it for faster compilation or disable this warning with GGML_CCACHE=OFF
+-- CMAKE_SYSTEM_PROCESSOR: ARM64
+-- GGML_SYSTEM_ARCH: ARM
+-- Including CPU backend
+-- ARM detected
+CMake Warning at ggml/src/ggml-cpu/CMakeLists.txt:138 (message):
+  ARM -march/-mcpu not found, -mcpu=native will be used
+Call Stack (most recent call first):
+  ggml/src/CMakeLists.txt:585 (ggml_add_cpu_backend_variant_impl)
+
+
+-- Checking for ARM features using flags:
+--   -U__ARM_FEATURE_SVE
+--   -U__ARM_FEATURE_SME
+--   -mcpu=native+dotprod+i8mm+nosve+nosme
+-- Adding CPU backend variant ggml-cpu: -U__ARM_FEATURE_SVE;-U__ARM_FEATURE_SME;-mcpu=native+dotprod+i8mm+nosve+nosme 
+-- ggml version: 0.21.0
+-- ggml commit:  e8fd209
+-- Could NOT find OpenSSL, try to set the path to OpenSSL root folder in the system variable OPENSSL_ROOT_DIR (missing: OPENSSL_CRYPTO_LIBRARY OPENSSL_INCLUDE_DIR) 
+CMake Warning at vendor/cpp-httplib/CMakeLists.txt:154 (message):
+  OpenSSL not found, HTTPS support disabled
+
+
+-- Generating embedded license file for target: llama-app
+-- Configuring done (1.3s)
+-- Generating done (0.4s)
+-- Build files have been written to: C:/Users/Pawan/Desktop/CIOT-V2/build/prism-arm-stock

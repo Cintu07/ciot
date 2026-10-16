@@ -1,0 +1,25 @@
+{
+  "all_match": true,
+  "prompts": 3,
+  "matches": [
+    true,
+    true,
+    true
+  ],
+  "compared_generated_tokens": [
+    32,
+    28,
+    25
+  ],
+  "scope": "Exact token IDs for these three prompts only; not a universal logit-equivalence proof",
+  "model": "Ternary-Bonsai-2-27B-PQ2_0.gguf",
+  "model_bytes": 7206168928,
+  "tool_sha256": {
+    "stock": "8cca43aeae0eb0b22ceb35ca7634474b4cb1df252c62f8bdf084ff0386a94da7",
+    "candidate": "1e793d06bdb1de1053731af5d28f0dd74598b9d857593dc507c50f86088ee9b2"
+  },
+  "runtime_sha256": {
+    "stock": {},
+    "candidate": {}
+  }
+}

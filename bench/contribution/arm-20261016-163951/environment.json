@@ -1,0 +1,15 @@
+{
+    "patch_sha256":  "17407089DA8991E0DDD18422E77DD18FB66045D18BE917BF9EF43644DABBA688",
+    "build_jobs":  2,
+    "stage":  "Large",
+    "threads":  4,
+    "battery":  {
+                    "BatteryStatus":  1,
+                    "EstimatedChargeRemaining":  32
+                },
+    "processor":  {
+                      "Name":  "Snapdragon(R) X - X126100 - Qualcomm(R) Oryon(TM) CPU",
+                      "Architecture":  12
+                  },
+    "revision":  "e8fd209c975c80aa7fb36a8423571ff3b1b7e955"
+}

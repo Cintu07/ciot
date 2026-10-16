@@ -1,0 +1,10 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "--build",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\arm-check-stock",
+                      "--parallel",
+                      "2"
+                  ],
+    "executable":  "cmake"
+}

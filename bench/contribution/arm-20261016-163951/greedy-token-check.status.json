@@ -1,0 +1,17 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\tools\\check_arm_tokens.py",
+                      "--stock-tool",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\arm-check-stock\\ciot-token-check.exe",
+                      "--candidate-tool",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\build\\arm-check-candidate\\ciot-token-check.exe",
+                      "--model",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\models\\Ternary-Bonsai-2-27B-PQ2_0.gguf",
+                      "--threads",
+                      "4",
+                      "--out",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\bench\\contribution\\arm-20261016-163951"
+                  ],
+    "executable":  "C:\\Python314\\python.exe"
+}

@@ -1,0 +1,12 @@
+{
+    "exit_code":  0,
+    "arguments":  [
+                      "-C",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\vendor\\prism-arm-candidate",
+                      "apply",
+                      "--reverse",
+                      "--check",
+                      "C:\\Users\\Pawan\\Desktop\\CIOT-V2\\patches\\pr-arm-pq2_0-repack.patch"
+                  ],
+    "executable":  "git"
+}

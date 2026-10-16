@@ -1,0 +1,108 @@
+[
+  {
+    "prompt": "<|im_start|>user\nExplain what a CPU memory bus does in one sentence.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "response": {
+      "tokens": [
+        32,
+        13540,
+        4779,
+        5647,
+        369,
+        264,
+        716,
+        314,
+        13934,
+        41495,
+        421,
+        5954,
+        279,
+        8358,
+        8427,
+        4821,
+        310,
+        3502,
+        321,
+        5091,
+        795,
+        11,
+        13822,
+        11,
+        321,
+        2444,
+        16779,
+        310,
+        321,
+        494,
+        1822,
+        4779
+      ]
+    }
+  },
+  {
+    "prompt": "<|im_start|>user\nWhat is 17 + 25? Give a short explanation and the answer.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "response": {
+      "tokens": [
+        1206,
+        1423,
+        279,
+        2542,
+        11,
+        488,
+        884,
+        279,
+        1330,
+        4947,
+        3658,
+        25,
+        220,
+        16,
+        22,
+        5346,
+        220,
+        17,
+        20,
+        13,
+        271,
+        332,
+        15666,
+        64700,
+        220,
+        19,
+        17,
+        248046
+      ]
+    }
+  },
+  {
+    "prompt": "<|im_start|>user\nWrite a Python function that adds two integers. Reply with code only.<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
+    "response": {
+      "tokens": [
+        71093,
+        12305,
+        198,
+        727,
+        884,
+        2784,
+        25,
+        514,
+        11,
+        292,
+        25,
+        514,
+        8,
+        1411,
+        514,
+        25,
+        198,
+        262,
+        460,
+        264,
+        478,
+        292,
+        198,
+        71093,
+        248046
+      ]
+    }
+  }
+]

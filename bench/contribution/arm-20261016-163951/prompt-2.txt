@@ -1,0 +1,7 @@
+<|im_start|>user
+Write a Python function that adds two integers. Reply with code only.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+

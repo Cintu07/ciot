@@ -1,0 +1,7 @@
+<|im_start|>user
+Explain what a CPU memory bus does in one sentence.<|im_end|>
+<|im_start|>assistant
+<think>
+
+</think>
+
